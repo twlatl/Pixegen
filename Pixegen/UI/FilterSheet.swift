@@ -191,10 +191,11 @@ struct FilterSheet: View {
                 if edit?.kind == .volumetricLight {
                     Button("Extract Depth") { Task { await session.extractDepth() } }
                         .help("Close the filter and add the depth the haze goes by as a new layer: white is near, black is far")
+                        .disabled(volumetricWaiting)
                 }
                 Button("OK") { Task { await session.commitFilter() } }
                     .configuredNativeShortcut(.return).buttonStyle(.borderedProminent)
-                    .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil))
+                    .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil) || volumetricWaiting)
             }
         }
         .onPreferenceChange(LabelWidthKey.self) { labelWidth = max(60, $0) }
@@ -321,6 +322,13 @@ struct FilterSheet: View {
     }
 
     /// Rim Light: Glow, then each light's color, angle, strength, width and choke, with room for up to three.
+    /// Volumetric Light's first preview, while it fetches the depth model or finds the subject: Extract Depth and OK
+    /// wait for it (the spinner says what for), and Cancel stays.
+    private var volumetricWaiting: Bool {
+        guard let edit, edit.kind == .volumetricLight else { return false }
+        return session.preparingDepth || edit.preparing && !VolumetricLighting.hasLooked(for: edit.hdrPreviewSource ?? edit.previewSource)
+    }
+
     @ViewBuilder private var volumetricLightControls: some View {
         let color = settings.volumetric.color
         HStack(spacing: 8) {
