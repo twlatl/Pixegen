@@ -95,6 +95,16 @@ struct VolumetricLightTests {
         #expect(abs(near - guessed) > 0.01, "near: \(near), guessed far: \(guessed)")
     }
 
+    /// Depth Contrast spreads bunched depths apart and keeps their order; 0 leaves them.
+    @Test func depthContrastSpreadsBunchedDepths() {
+        let bunched = DepthMap(values: [0, 0.01, 0.02, 0.03, 1], width: 5, height: 1)
+        #expect(bunched.equalized(0).values == bunched.values)
+        let spread = bunched.equalized(1).values
+        #expect(spread == [0, 0.25, 0.5, 0.75, 1], "evenly by rank: \(spread)")
+        let half = bunched.equalized(0.5).values
+        #expect(half == half.sorted() && half[2] > 0.2, "half way, in the same order: \(half)")
+    }
+
     @Test func zeroIntensityAndHazeLeaveTheImage() throws {
         var settings = VolumetricLightSettings()
         settings.intensity = 0
@@ -117,7 +127,7 @@ struct VolumetricLightTests {
                 let path = String(entry.split(separator: ",")[0])
                 guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
                       let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
-                let map = try #require(VolumetricLighting.depthMap(for: image))
+                let map = try #require(VolumetricLighting.depthMap(for: image, settings: VolumetricLightSettings()))
                 #expect(map.width == image.width && map.height == image.height)
                 let data = NSMutableData()
                 let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))

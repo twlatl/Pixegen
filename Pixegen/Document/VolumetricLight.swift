@@ -18,6 +18,9 @@ nonisolated struct VolumetricLightSettings: Equatable, Sendable {
     /// How far into the scene the haze begins, 0–100, by the photo's own spread of depths: at 0 it reaches up to the
     /// camera; at 50 about the nearer half of the scene stays clear; at 100 only the farthest parts are hazy.
     var distance: Double = 30
+    /// Depth Contrast, 0–100: how far the depth is spread out (`DepthMap.equalized`), so depths bunched together, like
+    /// a distant city, get haze in steps rather than all alike. 0 keeps the model's own spacing.
+    var depthContrast: Double = 0
 
     var isIdentity: Bool { intensity == 0 && haze == 0 }
 
@@ -30,6 +33,7 @@ nonisolated struct VolumetricLightSettings: Equatable, Sendable {
         result.size = ImageAdjustmentPixels.clamp(size, 0...100, 20)
         result.shafts = ImageAdjustmentPixels.clamp(shafts, 0...100, 0)
         result.distance = ImageAdjustmentPixels.clamp(distance, 0...100, 30)
+        result.depthContrast = ImageAdjustmentPixels.clamp(depthContrast, 0...100, 0)
         if let center, !(center.x.isFinite && center.y.isFinite) { result.center = nil }
         return result
     }
@@ -85,7 +89,7 @@ nonisolated enum VolumetricLighting {
         // The air lit by the scene itself: its light spread wide, which the haze takes its color and brightness from.
         let ambient = blurred(image, side * 0.12)
         // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its mask.
-        let predicted = DepthModel.depth(for: source)
+        let predicted = DepthModel.depth(for: source)?.equalized(Float(settings.depthContrast / 100))
         let depth = predicted.map { composedDepth($0, subject: mask, extent: extent) }
         return try MetalVolumetricLight.combined(image, beams: full, near: near, glows: glows, ambient: ambient, depth: depth,
                                                  ramp: ramp(settings.distance, depth: predicted), light: light, side: side,
@@ -144,8 +148,8 @@ nonisolated enum VolumetricLighting {
 
     /// The depth the haze goes by, as a picture the size of `source`: white near, black far (`composedDepth`). Nil
     /// without the model.
-    static func depthMap(for source: CGImage) -> CGImage? {
-        guard let depth = DepthModel.depth(for: source) else { return nil }
+    static func depthMap(for source: CGImage, settings: VolumetricLightSettings) -> CGImage? {
+        guard let depth = DepthModel.depth(for: source)?.equalized(Float(settings.normalized.depthContrast / 100)) else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let subject = Self.subject(source).map { CIImage(cgImage: $0, options: [.colorSpace: NSNull()]) }
         let map = composedDepth(depth, subject: subject, extent: extent)
@@ -238,11 +242,12 @@ extension EditorSession {
     func extractDepth() async {
         guard let edit = filterEdit, edit.kind == .volumetricLight, !edit.committing,
               let source = document?.layers.first(where: { $0.id == edit.layerID }), let image = source.asset?.image else { return }
+        let settings = edit.settings.volumetric
         cancelFilter()
         preparingDepth = true
         let ready = await DepthModel.prepare()
         preparingDepth = false
-        let map = ready ? await Task.detached(priority: .userInitiated) { VolumetricLighting.depthMap(for: image) }.value : nil
+        let map = ready ? await Task.detached(priority: .userInitiated) { VolumetricLighting.depthMap(for: image, settings: settings) }.value : nil
         guard let map, let thumbnail = try? PixelAdjust.thumbnail(of: map), canEditLayers,
               let index = document?.layers.firstIndex(where: { $0.id == source.id }) else { NSSound.beep(); return }
         var layer = ImageLayer(asset: ImportedImage(image: map, thumbnail: thumbnail, name: "Depth"), origin: source.origin)

@@ -342,6 +342,8 @@ struct FilterSheet: View {
             .help("How thick the air is: haze lit by the light, thinner in front of the subject")
         control("Distance", \.volumetric.distance, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
             .help("How far into the scene the haze begins: low reaches up to the camera, high leaves all but the farthest parts clear")
+        control("Depth Contrast", \.volumetric.depthContrast, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("Spread out depths bunched together, such as a distant city, so the haze builds through them in steps; 0 keeps the depth as the model sees it")
         control("Size", \.volumetric.size, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
             .help("How big the light is")
         control("Intensity", \.volumetric.intensity, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
