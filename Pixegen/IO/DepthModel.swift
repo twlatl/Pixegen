@@ -12,12 +12,12 @@ import Vision
 nonisolated enum DepthModel {
     /// Where the files are published, and what each must be. A new model gets a new folder, so an old copy is never
     /// mistaken for it.
-    static var source = URL(string: "https://github.com/robbietilton/Compositor/releases/download/depth-model-1/")!
-    static let version = "1"
+    static var source = URL(string: "https://github.com/robbietilton/Compositor/releases/download/depth-model-2/")!
+    static let version = "2"
     private static let files: [(name: String, path: String, sha256: String)] = [
-        ("Manifest.json", "Manifest.json", "76e9800f629b3dcff6215a966794fc2a4fa68b4eaece012222dd33cc79e35cad"),
-        ("model.mlmodel", "Data/com.apple.CoreML/model.mlmodel", "b50de243dccf6a3593c4d04ba4884a00720ec8520807bdd917711209a301851b"),
-        ("weight.bin", "Data/com.apple.CoreML/weights/weight.bin", "d41465121b86e520cba34c1c6ea2200390445b150c8aa87bff0fd58d65094f74"),
+        ("Manifest.json", "Manifest.json", "7d798b4662f8a9981303e56ef19672c084c8a97cb4bafebc8ad92be189ae7a1b"),
+        ("model.mlmodel", "Data/com.apple.CoreML/model.mlmodel", "accb4c4482bd1aa57b3ad39bc4e4f9604b76c8901fd8689da8d92c6211768f00"),
+        ("weight.bin", "Data/com.apple.CoreML/weights/weight.bin", "79f1caf36183fb182f14dde56e9d33dfc3801bc511d60ca0f6bba6148b5cff5a"),
     ]
     /// The model's input size; it squashes the whole picture to this.
     static let side = 320
