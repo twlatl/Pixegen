@@ -65,9 +65,14 @@ nonisolated enum VolumetricLighting {
             try Self.scene(image, source: source, extent: extent, keeps: keeps)
         }
         let depth = prepared.depth(source: source, extent: extent, contrast: settings.depthContrast, keeps: keeps) {
-            // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its mask.
+            // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its
+            // outline (`outline`).
             (DepthModel.depth(for: source)?.equalized(Float(settings.depthContrast / 100))).map {
-                (image: composedDepth($0, subject: scene.mask, extent: extent), distances: $0.values.map { 1 - $0 }.sorted())
+                (image: composedDepth($0, subject: outline(source).map {
+                    CIImage(cgImage: $0, options: [.colorSpace: NSNull()])
+                        .transformed(by: CGAffineTransform(scaleX: extent.width / CGFloat(source.width), y: extent.height / CGFloat(source.height)))
+                        .cropped(to: extent)
+                }, extent: extent), distances: $0.values.map { 1 - $0 }.sorted())
             }
         }
         let beams = try prepared.beams(source: source, extent: extent, key: BeamsKey(light: light, settings: settings), keeps: keeps) {
@@ -236,7 +241,9 @@ nonisolated enum VolumetricLighting {
         }
         // The mask firmed up: its soft grays reach a little past the subject (they're for Rim Light's strands), and
         // blended through as nearness they'd ring it with a glow.
-        let subject = scaled(soft, 2.5, bias: -1.1)
+        // Smoothed a touch first, so the small steps in Vision's mask (it's worked out small and enlarged) round off
+        // into the straight or curved edge they stand for, then made crisp again: no softer than before.
+        let subject = scaled(blurred(soft, max(1, side * 0.0015)), 2.5, bias: -1.1)
         // The backdrop is read from beyond the band the model's nearness bleeds into (the mask grown past it), then
         // spread back in under the subject and the band, each place an average of the backdrop near it.
         let beyond = scaled(blurred(subject, reach), -6, bias: 1)
@@ -256,7 +263,7 @@ nonisolated enum VolumetricLighting {
     static func depthMap(for source: CGImage, settings: VolumetricLightSettings) -> CGImage? {
         guard let depth = DepthModel.depth(for: source)?.equalized(Float(settings.normalized.depthContrast / 100)) else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
-        let subject = Self.subject(source).map { CIImage(cgImage: $0, options: [.colorSpace: NSNull()]) }
+        let subject = outline(source).map { CIImage(cgImage: $0, options: [.colorSpace: NSNull()]) }
         let map = composedDepth(depth, subject: subject, extent: extent)
         let opaque = map.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
                                                                       "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)])
@@ -272,6 +279,13 @@ nonisolated enum VolumetricLighting {
             noSubject.remember(image)
             return nil
         }
+    }
+    /// The subject's outline for the depth: Vision's mask as it comes, smooth and true to the subject's shape. Not the
+    /// one pulled onto the photo's edges (`subject`): that catches hair for the light, but along a busy backdrop (ice,
+    /// rocks) it's pulled in and out by the texture, and the depth's edge would follow it, wavy where it's straight.
+    static func outline(_ image: CGImage) -> CGImage? {
+        if noSubject.contains(image) { return nil }
+        return try? SubjectRemoval.subjectMask(image)
     }
     /// Whether the subject in `image` has been looked for already, so lighting it is quick.
     static func hasLooked(for image: CGImage) -> Bool { noSubject.contains(image) || RimLighting.hasSubject(for: image) }
