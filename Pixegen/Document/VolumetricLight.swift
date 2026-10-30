@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import CoreImage
@@ -10,10 +11,13 @@ nonisolated struct VolumetricLightSettings: Equatable, Sendable {
     var center: CGPoint?
     var color = AdjustmentColor(red: 1, green: 0.86, blue: 0.68)
     var intensity: Double = 30
-    var length: Double = 30
+    var length: Double = 0
     var haze: Double = 60
     var size: Double = 20
     var shafts: Double = 0
+    /// How far into the scene the haze begins, 0–100, by the photo's own spread of depths: at 0 it reaches up to the
+    /// camera; at 50 about the nearer half of the scene stays clear; at 100 only the farthest parts are hazy.
+    var distance: Double = 30
 
     var isIdentity: Bool { intensity == 0 && haze == 0 }
 
@@ -21,10 +25,11 @@ nonisolated struct VolumetricLightSettings: Equatable, Sendable {
         var result = self
         result.color = color.clamped
         result.intensity = ImageAdjustmentPixels.clamp(intensity, 0...100, 30)
-        result.length = ImageAdjustmentPixels.clamp(length, 0...100, 30)
+        result.length = ImageAdjustmentPixels.clamp(length, 0...100, 0)
         result.haze = ImageAdjustmentPixels.clamp(haze, 0...100, 60)
         result.size = ImageAdjustmentPixels.clamp(size, 0...100, 20)
         result.shafts = ImageAdjustmentPixels.clamp(shafts, 0...100, 0)
+        result.distance = ImageAdjustmentPixels.clamp(distance, 0...100, 30)
         if let center, !(center.x.isFinite && center.y.isFinite) { result.center = nil }
         return result
     }
@@ -50,8 +55,8 @@ nonisolated enum VolumetricLighting {
         let raw: [CIImageOption: Any] = [.colorSpace: NSNull()]
         let toImage = CGAffineTransform(scaleX: extent.width / CGFloat(source.width), y: extent.height / CGFloat(source.height))
         // With no subject found, nothing stands in front of the light.
-        let subject = Self.subject(source).map { CIImage(cgImage: $0, options: raw).transformed(by: toImage).cropped(to: extent) }
-            ?? CIImage.black.cropped(to: extent)
+        let mask = Self.subject(source).map { CIImage(cgImage: $0, options: raw).transformed(by: toImage).cropped(to: extent) }
+        let subject = mask ?? CIImage.black.cropped(to: extent)
         // The beams are soft, so they're worked out at half size, which also halves the distance each one gathers over.
         let half = CGAffineTransform(scaleX: 0.5, y: 0.5)
         let halfExtent = extent.applying(half).integral
@@ -79,8 +84,75 @@ nonisolated enum VolumetricLighting {
                 "inputBVector": CIVector(x: 0, y: 0, z: 2, w: 0)])])
         // The air lit by the scene itself: its light spread wide, which the haze takes its color and brightness from.
         let ambient = blurred(image, side * 0.12)
-        return try MetalVolumetricLight.combined(image, beams: full, near: near, glows: glows, ambient: ambient, light: light, side: side,
+        // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its mask.
+        let predicted = DepthModel.depth(for: source)
+        let depth = predicted.map { composedDepth($0, subject: mask, extent: extent) }
+        return try MetalVolumetricLight.combined(image, beams: full, near: near, glows: glows, ambient: ambient, depth: depth,
+                                                 ramp: ramp(settings.distance, depth: predicted), light: light, side: side,
                                                  settings: settings).cropped(to: extent)
+    }
+
+    /// Where the haze begins and where it's full, as distance (0 nearest, 1 farthest), for Distance: with depth, read
+    /// off the photo's own spread of depths, so the same Distance clears the same share of any scene; without it, as
+    /// the guess runs. The haze always builds over a gentle stretch from the one to the other, so it can't turn hard
+    /// or inside out.
+    static func ramp(_ distance: Double, depth: DepthMap?) -> (start: Float, end: Float) {
+        let share = Float(distance / 100)
+        guard let depth, !depth.values.isEmpty else { return (share * 0.6, share * 0.6 + 0.5) }
+        let distances = depth.values.map { 1 - $0 }.sorted()
+        func at(_ share: Float) -> Float { distances[min(distances.count - 1, Int(max(0, share) * Float(distances.count - 1)))] }
+        // A wide stretch however close the scene's depths lie, so a soft edge in the depth stays a soft edge in the haze.
+        let start = min(at(share), 0.9)
+        return (start, max(at(min(1, share + 0.45)), start + 0.45))
+    }
+
+    /// The depth the haze goes by, over `extent`: 1 near, 0 far. The model's map is soft at the subject's edge, where
+    /// its nearness bleeds out into a band around it, so there the subject's mask decides instead: inside the mask the
+    /// subject is near, and the band around it takes the depth of the backdrop just beyond it, worked out from around it
+    /// (as Rim Light finds the backdrop); the two meet through the mask's own soft edge, hair and all. Further off, the
+    /// model's map as it is.
+    static func composedDepth(_ predicted: DepthMap, subject: CIImage?, extent: CGRect) -> CIImage {
+        let side = max(extent.width, extent.height)
+        func blurred(_ image: CIImage, _ sigma: CGFloat) -> CIImage {
+            image.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
+        }
+        let depth = blurred(DepthModel.image(predicted, over: extent), side * 0.0015)
+        guard let soft = subject else { return depth }
+        let reach = side * 0.02
+        func scaled(_ image: CIImage, _ gain: CGFloat, bias: CGFloat = 0) -> CIImage {
+            image.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: gain, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: gain, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: gain, w: 0), "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)])
+            .applyingFilter("CIColorClamp")
+        }
+        // The mask firmed up: its soft grays reach a little past the subject (they're for Rim Light's strands), and
+        // blended through as nearness they'd ring it with a glow.
+        let subject = scaled(soft, 2.5, bias: -1.1)
+        // The backdrop is read from beyond the band the model's nearness bleeds into (the mask grown past it), then
+        // spread back in under the subject and the band, each place an average of the backdrop near it.
+        let beyond = scaled(blurred(subject, reach), -6, bias: 1)
+        let weighted = blurred(depth.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: beyond]), reach * 2.5)
+        let behind = scaled(blurred(beyond, reach * 2.5), 1, bias: 0.001)
+            .applyingFilter("CIDivideBlendMode", parameters: [kCIInputBackgroundImageKey: weighted])
+        // Near the subject, the backdrop's depth; further out, the model's.
+        let closeness = scaled(blurred(subject, reach * 1.5), 4)
+        let around = behind.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: depth, kCIInputMaskImageKey: closeness])
+        let near = depth.applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0.9, y: 0.9, z: 0.9, w: 0)])
+        return near.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: around, kCIInputMaskImageKey: subject])
+            .cropped(to: extent)
+    }
+
+    /// The depth the haze goes by, as a picture the size of `source`: white near, black far (`composedDepth`). Nil
+    /// without the model.
+    static func depthMap(for source: CGImage) -> CGImage? {
+        guard let depth = DepthModel.depth(for: source) else { return nil }
+        let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        let subject = Self.subject(source).map { CIImage(cgImage: $0, options: [.colorSpace: NSNull()]) }
+        let map = composedDepth(depth, subject: subject, extent: extent)
+        let opaque = map.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                                                                      "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)])
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        return context.createCGImage(opaque, from: extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
     }
 
     /// The subject in `image`, as Rim Light finds it, or nil when there's none; that's remembered too, so a photo without
@@ -97,9 +169,10 @@ nonisolated enum VolumetricLighting {
     private static let noSubject = Remembered()
     private final class Remembered: @unchecked Sendable {
         private let lock = NSLock()
-        private var key: ObjectIdentifier?
-        func contains(_ image: CGImage) -> Bool { lock.lock(); defer { lock.unlock() }; return key == ObjectIdentifier(image) }
-        func remember(_ image: CGImage) { lock.lock(); key = ObjectIdentifier(image); lock.unlock() }
+        /// Held, so another image can't take its place in memory and be mistaken for it.
+        private var image: CGImage?
+        func contains(_ image: CGImage) -> Bool { lock.lock(); defer { lock.unlock() }; return self.image === image }
+        func remember(_ image: CGImage) { lock.lock(); self.image = image; lock.unlock() }
     }
 
     /// Where the light starts: in the biggest bright area of `image` (a window, the sky, a beam), at its brightest, in its
@@ -156,5 +229,29 @@ nonisolated enum VolumetricLighting {
         }
         return CGPoint(x: (Double(best.at % width) + 0.5) * Double(image.width) / Double(width),
                        y: (Double(best.at / width) + 0.5) * Double(image.height) / Double(height))
+    }
+}
+
+extension EditorSession {
+    /// Volumetric Light's Extract Depth: closes the filter and adds the depth its haze goes by as a layer of its own,
+    /// above the layer, white near and black far, to look at or use. Fetches the depth model first if it isn't here.
+    func extractDepth() async {
+        guard let edit = filterEdit, edit.kind == .volumetricLight, !edit.committing,
+              let source = document?.layers.first(where: { $0.id == edit.layerID }), let image = source.asset?.image else { return }
+        cancelFilter()
+        preparingDepth = true
+        let ready = await DepthModel.prepare()
+        preparingDepth = false
+        let map = ready ? await Task.detached(priority: .userInitiated) { VolumetricLighting.depthMap(for: image) }.value : nil
+        guard let map, let thumbnail = try? PixelAdjust.thumbnail(of: map), canEditLayers,
+              let index = document?.layers.firstIndex(where: { $0.id == source.id }) else { NSSound.beep(); return }
+        var layer = ImageLayer(asset: ImportedImage(image: map, thumbnail: thumbnail, name: "Depth"), origin: source.origin)
+        layer.transform = source.transform
+        layer.name = "Depth"
+        layer.parentID = source.parentID
+        beginEdit("Extract Depth")
+        document?.layers.insert(layer, at: index + 1)
+        activeLayerID = layer.id
+        endEdit()
     }
 }

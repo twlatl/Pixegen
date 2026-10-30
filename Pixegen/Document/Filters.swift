@@ -759,6 +759,18 @@ extension EditorSession {
             edit.startedEmpty = startedEmpty
             edit.repeating = repeating
             filterEdit = edit
+            // Volumetric Light's depth model, downloaded the first time: the fog guesses until it's here, then redraws.
+            if kind == .volumetricLight, !DepthModel.isReady {
+                preparingDepth = true
+                Task { [weak self] in
+                    let ready = await DepthModel.prepare()
+                    guard let self else { return }
+                    self.preparingDepth = false
+                    if ready, let edit = self.filterEdit, edit.kind == .volumetricLight, !edit.committing {
+                        self.updateFilter(edit.settings, preview: edit.preview)
+                    }
+                }
+            }
             if kind == .cameraRaw, edit.previewSource.width * edit.previewSource.height >= MetalCameraRawLookup.minimumPixels {
                 Task.detached(priority: .utility) { _ = MetalCameraRawLookup.shared }
             }

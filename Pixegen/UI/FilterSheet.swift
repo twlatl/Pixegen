@@ -178,11 +178,19 @@ struct FilterSheet: View {
                     ProgressView().controlSize(.small)
                     Text(edit?.committing == true ? "Applying…" : "Working…")
                         .font(.callout).foregroundStyle(.secondary)
+                } else if edit?.kind == .volumetricLight, session.preparingDepth {
+                    // The first time only: the depth model is downloading (about 2 MB).
+                    ProgressView().controlSize(.small)
+                    Text("Getting depth…").font(.callout).foregroundStyle(.secondary)
                 } else if let edit, edit.preparing, edit.kind == .rimLight && !RimLighting.hasSubject(for: edit.hdrPreviewSource ?? edit.previewSource)
                             || edit.kind == .volumetricLight && !VolumetricLighting.hasLooked(for: edit.hdrPreviewSource ?? edit.previewSource) {
                     // Only the first preview, which finds the subject: relighting it afterwards is quick.
                     ProgressView().controlSize(.small)
                     Text("Finding the subject…").font(.callout).foregroundStyle(.secondary)
+                }
+                if edit?.kind == .volumetricLight {
+                    Button("Extract Depth") { Task { await session.extractDepth() } }
+                        .help("Close the filter and add the depth the haze goes by as a new layer: white is near, black is far")
                 }
                 Button("OK") { Task { await session.commitFilter() } }
                     .configuredNativeShortcut(.return).buttonStyle(.borderedProminent)
@@ -191,7 +199,8 @@ struct FilterSheet: View {
         }
         .onPreferenceChange(LabelWidthKey.self) { labelWidth = max(60, $0) }
         .padding(24)
-        .frame(width: isCameraRaw ? FloatingPanelController.dockedWidth : 380)
+        // Volumetric Light's a little wider: Extract Depth shares the row with Cancel and OK.
+        .frame(width: isCameraRaw ? FloatingPanelController.dockedWidth : edit?.kind == .volumetricLight ? 440 : 380)
         .frame(maxHeight: isCameraRaw ? .infinity : nil, alignment: .top)
         .fixedSize(horizontal: false, vertical: !isCameraRaw)
 
@@ -331,6 +340,8 @@ struct FilterSheet: View {
         }
         control("Haze", \.volumetric.haze, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
             .help("How thick the air is: haze lit by the light, thinner in front of the subject")
+        control("Distance", \.volumetric.distance, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How far into the scene the haze begins: low reaches up to the camera, high leaves all but the farthest parts clear")
         control("Size", \.volumetric.size, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
             .help("How big the light is")
         control("Intensity", \.volumetric.intensity, range: 0...100, unit: "%", decimals: 0, logarithmic: false)

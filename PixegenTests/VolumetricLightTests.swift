@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import Testing
@@ -71,6 +72,29 @@ struct VolumetricLightTests {
         #expect(corner < open - 10, "the far corner gets less than near the window: \(corner) against \(open)")
     }
 
+    /// Depth reaches the haze: everything near (1) leaves less haze than no depth at all, which guesses most of the frame
+    /// is far.
+    @Test func depthThinsTheHazeWhereThingsAreNear() throws {
+        let extent = CGRect(x: 0, y: 0, width: 64, height: 64)
+        let depthImage = DepthModel.image(DepthMap(values: [Float](repeating: 1, count: 16 * 16), width: 16, height: 16), over: extent)
+        #expect(depthImage.extent == extent, "the depth image covers the layer: \(depthImage.extent)")
+        let photo = CIImage(color: CIColor(red: 0.1, green: 0.1, blue: 0.1)).cropped(to: extent)
+        let clear = CIImage.black.cropped(to: extent)
+        var settings = VolumetricLightSettings()
+        settings.intensity = 0
+        settings.haze = 100
+        let context = CIContext()
+        func top(_ depth: CIImage?) throws -> Float {
+            let lit = try MetalVolumetricLight.combined(photo, beams: clear, near: clear, glows: clear, ambient: photo, depth: depth,
+                                                        ramp: (0, 0.5), light: CGPoint(x: 32, y: 32), side: 64, settings: settings)
+            var pixel = [Float](repeating: 0, count: 4)
+            context.render(lit, toBitmap: &pixel, rowBytes: 16, bounds: CGRect(x: 32, y: 60, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return pixel[0]
+        }
+        let guessed = try top(nil), near = try top(depthImage)
+        #expect(abs(near - guessed) > 0.01, "near: \(near), guessed far: \(guessed)")
+    }
+
     @Test func zeroIntensityAndHazeLeaveTheImage() throws {
         var settings = VolumetricLightSettings()
         settings.intensity = 0
@@ -80,8 +104,31 @@ struct VolumetricLightTests {
 
     /// Renders the photos in `VOLUMETRIC_IMAGES` ("path,x,y" separated by ";", the light as fractions of the width and
     /// height from the top left) as attachments, to look at. Skipped when it's unset.
-    @Test func renderSamples() throws {
+    /// With `VOLUMETRIC_DEPTH` set to a folder laid out as the release is, each is rendered twice: guessing depth, then
+    /// with the depth model downloaded from there ("-a" and "-b").
+    @Test func renderSamples() async throws {
         guard let list = ProcessInfo.processInfo.environment["VOLUMETRIC_IMAGES"] else { return }
+        try render(list, suffix: "")
+        if let folder = ProcessInfo.processInfo.environment["VOLUMETRIC_DEPTH"] {
+            DepthModel.source = URL(fileURLWithPath: folder, isDirectory: true)
+            #expect(await DepthModel.prepare(), "the model downloads, checks out and loads")
+            try render(list, suffix: "-b")
+            for (index, entry) in list.split(separator: ";").enumerated() {
+                let path = String(entry.split(separator: ",")[0])
+                guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+                      let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
+                let map = try #require(VolumetricLighting.depthMap(for: image))
+                #expect(map.width == image.width && map.height == image.height)
+                let data = NSMutableData()
+                let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+                CGImageDestinationAddImage(destination, map, nil)
+                CGImageDestinationFinalize(destination)
+                Attachment.record(data as Data, named: "sample-\(index)-depth-lit.png")
+            }
+        }
+    }
+
+    private func render(_ list: String, suffix: String) throws {
         for (index, entry) in list.split(separator: ";").enumerated() {
             let parts = entry.split(separator: ",").map(String.init)
             guard parts.count >= 3, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: parts[0]) as CFURL, nil),
@@ -102,13 +149,14 @@ struct VolumetricLightTests {
             if parts.count >= 11, let r = Double(parts[8]), let g = Double(parts[9]), let b = Double(parts[10]) {
                 settings.volumetric.color = AdjustmentColor(red: r, green: g, blue: b)
             }
+            if parts.count >= 12, let distance = Double(parts[11]) { settings.volumetric.distance = distance }
             let lit = try PixelFilter.run(FilterJob(kind: .volumetricLight, image: image, settings: settings, scale: 1, selection: nil,
                                                     mapping: .identity))
             let data = NSMutableData()
             let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
             CGImageDestinationAddImage(destination, lit, nil)
             CGImageDestinationFinalize(destination)
-            Attachment.record(data as Data, named: "sample-\(index)-lit.png")
+            Attachment.record(data as Data, named: "sample-\(index)\(suffix)-lit.png")
         }
     }
 }
