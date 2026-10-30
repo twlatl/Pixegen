@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import CoreImage
+import Vision
 
 /// Filter › Volumetric Light: a light placed on the image, its beams through the air, and the haze it lights. `center`
 /// is where the light is, in document coordinates, set by clicking the canvas; the filter opens with it on the layer's
@@ -239,10 +240,9 @@ nonisolated enum VolumetricLighting {
                 "inputBVector": CIVector(x: 0, y: 0, z: gain, w: 0), "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)])
             .applyingFilter("CIColorClamp")
         }
-        // The mask firmed up: its soft grays reach a little past the subject (they're for Rim Light's strands), and
-        // blended through as nearness they'd ring it with a glow.
-        // Smoothed a touch first, so the small steps in Vision's mask (it's worked out small and enlarged) round off
-        // into the straight or curved edge they stand for, then made crisp again: no softer than before.
+        // The outline firmed up: crisp, so the haze meets the subject cleanly rather than creeping onto it. Smoothed a
+        // touch first, so the small steps in Vision's mask (it's worked out small and enlarged) round off into the
+        // straight or curved edge they stand for.
         let subject = scaled(blurred(soft, max(1, side * 0.0015)), 2.5, bias: -1.1)
         // The backdrop is read from beyond the band the model's nearness bleeds into (the mask grown past it), then
         // spread back in under the subject and the band, each place an average of the backdrop near it.
@@ -280,12 +280,65 @@ nonisolated enum VolumetricLighting {
             return nil
         }
     }
-    /// The subject's outline for the depth: Vision's mask as it comes, smooth and true to the subject's shape. Not the
-    /// one pulled onto the photo's edges (`subject`): that catches hair for the light, but along a busy backdrop (ice,
-    /// rocks) it's pulled in and out by the texture, and the depth's edge would follow it, wavy where it's straight.
+    /// The subject's outline for the depth. People take Vision's person segmentation at its most accurate, which
+    /// follows shoulders and hair truly, where the general subject mask bulges past them; anything else (an object, or
+    /// what a person holds) takes the general mask as it comes, smooth and true to its shape. Not the mask pulled onto
+    /// the photo's edges (`subject`): that catches hair for the light, but along a busy backdrop (ice, rocks) it's pulled
+    /// in and out by the texture, and the depth's edge would follow it, wavy where it's straight. Worked out once an
+    /// image.
     static func outline(_ image: CGImage) -> CGImage? {
         if noSubject.contains(image) { return nil }
-        return try? SubjectRemoval.subjectMask(image)
+        return outlines.outline(for: image) {
+            guard let general = try? SubjectRemoval.subjectMask(image) else { return nil }
+            guard let person = personMask(image) else { return general }
+            let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            let raw: [CIImageOption: Any] = [.colorSpace: NSNull()]
+            let personImage = CIImage(cgImage: person, options: raw)
+            // Where a person is (and a little around, for their outline), their own mask; elsewhere the general one.
+            let side = CGFloat(max(image.width, image.height))
+            let near = personImage.clampedToExtent().applyingGaussianBlur(sigma: side * 0.01).cropped(to: extent)
+                .applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: 20, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 20, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: 20, w: 0)]).applyingFilter("CIColorClamp")
+            let composed = personImage.applyingFilter("CIBlendWithMask", parameters: [
+                kCIInputBackgroundImageKey: CIImage(cgImage: general, options: raw), kCIInputMaskImageKey: near])
+            return try? PixelAdjust.render(composed.cropped(to: extent), width: image.width, height: image.height, isMask: true)
+        }
+    }
+
+    /// The people in `image`, white, at its size; nil when there are none.
+    private static func personMask(_ image: CGImage) -> CGImage? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        guard (try? VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])) != nil,
+              let buffer = request.results?.first?.pixelBuffer else { return nil }
+        let mask = CIImage(cvPixelBuffer: buffer)
+        let scaled = mask.samplingLinear().transformed(by: CGAffineTransform(scaleX: CGFloat(image.width) / mask.extent.width,
+                                                                              y: CGFloat(image.height) / mask.extent.height))
+        guard let rendered = try? PixelAdjust.render(scaled, width: image.width, height: image.height, isMask: true) else { return nil }
+        // An empty mask means no one's there.
+        let peak = scaled.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: CGRect(x: 0, y: 0, width: image.width, height: image.height))])
+        var pixel = [UInt8](repeating: 0, count: 4)
+        PixelAdjust.ciContext.render(peak, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+        return pixel[0] > 128 ? rendered : nil
+    }
+
+    /// The last image's outline, held with the image so another can't take its place in memory and be mistaken for it.
+    private static let outlines = Outlines()
+    private final class Outlines: @unchecked Sendable {
+        private let lock = NSLock()
+        private var image: CGImage?
+        private var value: CGImage??
+        func outline(for image: CGImage, make: () -> CGImage?) -> CGImage? {
+            lock.lock()
+            let hit = self.image === image ? value : nil
+            lock.unlock()
+            if let hit { return hit }
+            let made = make()
+            lock.lock(); self.image = image; value = .some(made); lock.unlock()
+            return made
+        }
     }
     /// Whether the subject in `image` has been looked for already, so lighting it is quick.
     static func hasLooked(for image: CGImage) -> Bool { noSubject.contains(image) || RimLighting.hasSubject(for: image) }
