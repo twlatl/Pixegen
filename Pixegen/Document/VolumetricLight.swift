@@ -75,13 +75,20 @@ nonisolated enum VolumetricLighting {
             .transformed(by: half.inverted()).cropped(to: extent)
         // How near the subject a pixel is, for the haze and beams in front of it.
         let near = subject.clampedToExtent().applyingGaussianBlur(sigma: max(1, side * 0.003)).cropped(to: extent)
-        // The photo's own lights, what's well brighter than the rest (headlights, windows, signs), each glowing into the
-        // haze in its own color: a halo and a wider bloom.
-        let lights = image.applyingFilter("CIColorMatrix", parameters: ["inputBiasVector": CIVector(x: -0.5, y: -0.5, z: -0.5, w: 0)])
-            .applyingFilter("CIColorClamp", parameters: ["inputMaxComponents": CIVector(x: 100, y: 100, z: 100, w: 1)])
         func blurred(_ image: CIImage, _ sigma: CGFloat) -> CIImage {
             image.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
         }
+        // The photo's own lights (headlights, windows, signs), each glowing into the haze in its own color: a halo and a
+        // wider bloom. A light is what's brighter than half white and than half again the light around it, so in a dark
+        // scene every lamp counts, while in a bright one (ice, a daylight street) only what stands out from the bright
+        // surfaces around it does, rather than the whole scene glowing.
+        let cutoff = blurred(image, side * 0.04).applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1.5, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 1.5, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 1.5, w: 0)])
+            .applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0.5, y: 0.5, z: 0.5, w: 0),
+                                                         "inputMaxComponents": CIVector(x: 100, y: 100, z: 100, w: 1)])
+        let lights = image.applyingFilter("CISubtractBlendMode", parameters: [kCIInputBackgroundImageKey: image, kCIInputImageKey: cutoff])
+            .applyingFilter("CIColorClamp", parameters: ["inputMaxComponents": CIVector(x: 100, y: 100, z: 100, w: 1)])
         let glows = blurred(lights, side * 0.012).applyingFilter("CIAdditionCompositing", parameters: [
             kCIInputBackgroundImageKey: blurred(lights, side * 0.05).applyingFilter("CIColorMatrix", parameters: [
                 "inputRVector": CIVector(x: 2, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 2, z: 0, w: 0),
