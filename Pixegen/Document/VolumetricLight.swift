@@ -51,30 +51,52 @@ nonisolated enum VolumetricLighting {
     static let fullHaze: Double = 1
 
     /// `image` (the pixels of `source`) with the light at `light`, in `image`'s own coordinates (Core Image's, y up).
+    /// What doesn't change as the sliders move is worked out once and kept (`Prepared`): the scene's glows, air and
+    /// subject for the image, its depth for Depth Contrast, and the beams for the light's place, Size, Length and
+    /// Shafts. So moving Haze, Distance, Intensity or the color only lays them over the photo again.
     static func apply(to image: CIImage, source: CGImage, settings: VolumetricLightSettings, light: CGPoint) throws -> CIImage {
         let settings = settings.normalized
         guard !settings.isIdentity else { return image }
         let extent = image.extent
+        let side = max(extent.width, extent.height)
+        // Kept only at the preview's size: the full-size pass on OK runs once, and its pieces would take a lot of memory.
+        let keeps = extent.width * extent.height <= FilterEdit.previewLimit * FilterEdit.previewLimit
+        let scene = try prepared.scene(source: source, extent: extent, keeps: keeps) {
+            try Self.scene(image, source: source, extent: extent, keeps: keeps)
+        }
+        let depth = prepared.depth(source: source, extent: extent, contrast: settings.depthContrast, keeps: keeps) {
+            // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its mask.
+            (DepthModel.depth(for: source)?.equalized(Float(settings.depthContrast / 100))).map {
+                (image: composedDepth($0, subject: scene.mask, extent: extent), distances: $0.values.map { 1 - $0 }.sorted())
+            }
+        }
+        let beams = try prepared.beams(source: source, extent: extent, key: BeamsKey(light: light, settings: settings), keeps: keeps) {
+            try Self.beams(image, subject: scene.subject, light: light, side: side, extent: extent, settings: settings, keeps: keeps)
+        }
+        return try MetalVolumetricLight.combined(image, beams: beams, near: scene.near, glows: scene.glows, ambient: scene.ambient,
+                                                 depth: depth?.image, ramp: ramp(settings.distance, distances: depth?.distances),
+                                                 light: light, side: side, settings: settings).cropped(to: extent)
+    }
+
+    /// What the haze is laid over the photo with that's the same whatever the sliders say.
+    private struct Scene {
+        /// The subject's mask, if there is a subject; `subject` is black without one.
+        let mask: CIImage?
+        let subject: CIImage
+        /// How near the subject a pixel is, for the haze and beams in front of it.
+        let near: CIImage
+        let glows: CIImage
+        let ambient: CIImage
+    }
+
+    private static func scene(_ image: CIImage, source: CGImage, extent: CGRect, keeps: Bool) throws -> Scene {
+        func kept(_ image: CIImage) throws -> CIImage { keeps ? try Self.kept(image) : image }
         let side = max(extent.width, extent.height)
         let raw: [CIImageOption: Any] = [.colorSpace: NSNull()]
         let toImage = CGAffineTransform(scaleX: extent.width / CGFloat(source.width), y: extent.height / CGFloat(source.height))
         // With no subject found, nothing stands in front of the light.
         let mask = Self.subject(source).map { CIImage(cgImage: $0, options: raw).transformed(by: toImage).cropped(to: extent) }
         let subject = mask ?? CIImage.black.cropped(to: extent)
-        // The beams are soft, so they're worked out at half size, which also halves the distance each one gathers over.
-        let half = CGAffineTransform(scaleX: 0.5, y: 0.5)
-        let halfExtent = extent.applying(half).integral
-        let small = image.samplingLinear().transformed(by: half).cropped(to: halfExtent)
-        let smallSubject = subject.samplingLinear().transformed(by: half).cropped(to: halfExtent)
-        // The photo's brightest, lightly blurred so one hot pixel doesn't set it, to tell its openings by.
-        let peak = image.clampedToExtent().applyingGaussianBlur(sigma: 2).cropped(to: extent)
-            .applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: extent)])
-        let beams = try MetalVolumetricLight.beams(small, subject: smallSubject, peak: peak, light: light.applying(half),
-                                                   side: side / 2, settings: settings)
-        let full = beams.clampedToExtent().applyingGaussianBlur(sigma: 1).samplingLinear()
-            .transformed(by: half.inverted()).cropped(to: extent)
-        // How near the subject a pixel is, for the haze and beams in front of it.
-        let near = subject.clampedToExtent().applyingGaussianBlur(sigma: max(1, side * 0.003)).cropped(to: extent)
         func blurred(_ image: CIImage, _ sigma: CGFloat) -> CIImage {
             image.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
         }
@@ -95,22 +117,98 @@ nonisolated enum VolumetricLighting {
                 "inputBVector": CIVector(x: 0, y: 0, z: 2, w: 0)])])
         // The air lit by the scene itself: its light spread wide, which the haze takes its color and brightness from.
         let ambient = blurred(image, side * 0.12)
-        // How far away each part is, once the depth model is here (`DepthModel`), the subject's edge taken from its mask.
-        let predicted = DepthModel.depth(for: source)?.equalized(Float(settings.depthContrast / 100))
-        let depth = predicted.map { composedDepth($0, subject: mask, extent: extent) }
-        return try MetalVolumetricLight.combined(image, beams: full, near: near, glows: glows, ambient: ambient, depth: depth,
-                                                 ramp: ramp(settings.distance, depth: predicted), light: light, side: side,
-                                                 settings: settings).cropped(to: extent)
+        let near = blurred(subject, max(1, side * 0.003))
+        return Scene(mask: try mask.map { try kept($0) }, subject: try kept(subject), near: try kept(near),
+                     glows: try kept(glows), ambient: try kept(ambient))
+    }
+
+    /// The beams for the light where it is, at full size. They're soft, so they're worked out at half size, which also
+    /// halves the distance each one gathers over.
+    private static func beams(_ image: CIImage, subject: CIImage, light: CGPoint, side: CGFloat, extent: CGRect,
+                              settings: VolumetricLightSettings, keeps: Bool) throws -> CIImage {
+        func kept(_ image: CIImage) throws -> CIImage { keeps ? try Self.kept(image) : image }
+        let half = CGAffineTransform(scaleX: 0.5, y: 0.5)
+        let halfExtent = extent.applying(half).integral
+        let small = image.samplingLinear().transformed(by: half).cropped(to: halfExtent)
+        let smallSubject = subject.samplingLinear().transformed(by: half).cropped(to: halfExtent)
+        // The photo's brightest, lightly blurred so one hot pixel doesn't set it, to tell its openings by.
+        let peak = image.clampedToExtent().applyingGaussianBlur(sigma: 2).cropped(to: extent)
+            .applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: extent)])
+        let beams = try MetalVolumetricLight.beams(small, subject: smallSubject, peak: peak, light: light.applying(half),
+                                                   side: side / 2, settings: settings)
+        return try kept(beams.clampedToExtent().applyingGaussianBlur(sigma: 1).samplingLinear()
+            .transformed(by: half.inverted()).cropped(to: extent))
+    }
+
+    /// The settings the beams depend on: they don't change as Haze, Distance, Intensity or the color move.
+    private struct BeamsKey: Equatable {
+        let light: CGPoint, size: Double, length: Double, shafts: Double
+        init(light: CGPoint, settings: VolumetricLightSettings) {
+            self.light = light; size = settings.size; length = settings.length; shafts = settings.shafts
+        }
+    }
+
+    /// `image` worked out now and held, in half floats and with no color conversion either way, as the filter itself
+    /// renders (`PixelAdjust.ciContext`), so it comes back exactly as it was, to build on without working it out again.
+    private static func kept(_ image: CIImage) throws -> CIImage {
+        guard let made = keeping.createCGImage(image, from: image.extent, format: .RGBAh,
+                                               colorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)) else { throw ExportError.render }
+        return CIImage(cgImage: made, options: [.colorSpace: NSNull()])
+            .transformed(by: CGAffineTransform(translationX: image.extent.minX, y: image.extent.minY))
+    }
+    private static let keeping = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+
+    /// The last image's scene, depth and beams, so a slider moving on the same image reuses them. Each is kept for the
+    /// image itself (held, so another can't take its place in memory and be mistaken for it) and its size.
+    private static let prepared = Prepared()
+    private final class Prepared: @unchecked Sendable {
+        private let lock = NSLock()
+        private var image: CGImage?
+        private var extent = CGRect.null
+        private var scene: Scene?
+        private var depth: (contrast: Double, value: (image: CIImage, distances: [Float])?)?
+        private var beams: (key: BeamsKey, image: CIImage)?
+
+        /// Starts over when the image changes.
+        private func forImage(_ source: CGImage, _ extent: CGRect) {
+            guard image !== source || self.extent != extent else { return }
+            image = source; self.extent = extent; scene = nil; depth = nil; beams = nil
+        }
+        func scene(source: CGImage, extent: CGRect, keeps: Bool, make: () throws -> Scene) rethrows -> Scene {
+            guard keeps else { return try make() }
+            lock.lock(); forImage(source, extent); let hit = scene; lock.unlock()
+            if let hit { return hit }
+            let made = try make()
+            lock.lock(); if image === source { scene = made }; lock.unlock()
+            return made
+        }
+        func depth(source: CGImage, extent: CGRect, contrast: Double, keeps: Bool,
+                   make: () -> (image: CIImage, distances: [Float])?) -> (image: CIImage, distances: [Float])? {
+            guard keeps else { return make() }
+            lock.lock(); forImage(source, extent); let hit = depth; lock.unlock()
+            if let hit, hit.contrast == contrast, hit.value != nil || !DepthModel.isReady { return hit.value }
+            let made = make()
+            // Without the model yet, nothing's kept, so its depth is picked up once it's here.
+            lock.lock(); if image === source, made != nil { depth = (contrast, made) }; lock.unlock()
+            return made
+        }
+        func beams(source: CGImage, extent: CGRect, key: BeamsKey, keeps: Bool, make: () throws -> CIImage) rethrows -> CIImage {
+            guard keeps else { return try make() }
+            lock.lock(); forImage(source, extent); let hit = beams; lock.unlock()
+            if let hit, hit.key == key { return hit.image }
+            let made = try make()
+            lock.lock(); if image === source { beams = (key, made) }; lock.unlock()
+            return made
+        }
     }
 
     /// Where the haze begins and where it's full, as distance (0 nearest, 1 farthest), for Distance: with depth, read
     /// off the photo's own spread of depths, so the same Distance clears the same share of any scene; without it, as
-    /// the guess runs. The haze always builds over a gentle stretch from the one to the other, so it can't turn hard
-    /// or inside out.
-    static func ramp(_ distance: Double, depth: DepthMap?) -> (start: Float, end: Float) {
+    /// the guess runs (`distances`: the photo's distances, sorted). The haze always builds over a gentle stretch from the
+    /// one to the other, so it can't turn hard or inside out.
+    static func ramp(_ distance: Double, distances: [Float]?) -> (start: Float, end: Float) {
         let share = Float(distance / 100)
-        guard let depth, !depth.values.isEmpty else { return (share * 0.6, share * 0.6 + 0.5) }
-        let distances = depth.values.map { 1 - $0 }.sorted()
+        guard let distances, !distances.isEmpty else { return (share * 0.6, share * 0.6 + 0.5) }
         func at(_ share: Float) -> Float { distances[min(distances.count - 1, Int(max(0, share) * Float(distances.count - 1)))] }
         // A wide stretch however close the scene's depths lie, so a soft edge in the depth stays a soft edge in the haze.
         let start = min(at(share), 0.9)

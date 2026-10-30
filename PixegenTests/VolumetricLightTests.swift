@@ -105,6 +105,32 @@ struct VolumetricLightTests {
         #expect(half == half.sorted() && half[2] > 0.2, "half way, in the same order: \(half)")
     }
 
+    /// Times the filter at preview size as Haze moves, for `VOLUMETRIC_TIMING` (an image path). Skipped when unset.
+    @Test func timeHazeChanges() async throws {
+        guard let path = ProcessInfo.processInfo.environment["VOLUMETRIC_TIMING"],
+              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let full = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        if let folder = ProcessInfo.processInfo.environment["VOLUMETRIC_DEPTH"] {
+            DepthModel.source = URL(fileURLWithPath: folder, isDirectory: true)
+            _ = await DepthModel.prepare()
+        }
+        // At the preview's size, 2048 on the long side.
+        let scale = 2048 / Double(max(full.width, full.height))
+        let context = try BrushRaster.context(width: Int(Double(full.width) * scale), height: Int(Double(full.height) * scale), mask: false)
+        BrushRaster.draw(full, in: CGRect(x: 0, y: 0, width: context.width, height: context.height), mask: false, context: context)
+        let image = try #require(context.makeImage())
+        var settings = FilterSettings()
+        settings.volumetric.center = CGPoint(x: Double(image.width) / 2, y: Double(image.height) * 0.1)
+        var times: [Double] = []
+        for haze in stride(from: 40.0, through: 80, by: 5) {
+            settings.volumetric.haze = haze
+            let start = Date()
+            _ = try PixelFilter.run(FilterJob(kind: .volumetricLight, image: image, settings: settings, scale: 1, selection: nil, mapping: .identity))
+            times.append(Date().timeIntervalSince(start) * 1000)
+        }
+        Attachment.record("\(image.width)x\(image.height) ms per Haze step: \(times.map { Int($0) }) depth \(DepthModel.isReady)", named: "timing.txt")
+    }
+
     @Test func zeroIntensityAndHazeLeaveTheImage() throws {
         var settings = VolumetricLightSettings()
         settings.intensity = 0
