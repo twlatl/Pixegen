@@ -110,3 +110,7 @@ Pixegen is forked from [Compositor](https://github.com/robbietilton/Compositor) 
 ## License
 
 MIT — see [LICENSE](LICENSE). Compositor's original copyright notice is kept there, as the license requires.
+
+Volumetric Light's depth model, DepthMini, is distilled from [Depth Anything V2 Small](https://github.com/DepthAnything/Depth-Anything-V2)
+(Apache-2.0) and starts from torchvision's ImageNet-trained MobileNetV3 weights (BSD-3-Clause). It isn't in the app:
+it's downloaded the first time Volumetric Light opens.
