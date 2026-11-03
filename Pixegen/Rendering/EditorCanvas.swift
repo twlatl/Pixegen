@@ -2034,7 +2034,8 @@ final class CanvasView: NSView {
             beginProgressiveDrag(at: point)
             return
         }
-        if session.filterEdit?.kind == .volumetricLight, !spaceHeld, let document = session.document {
+        // A color well's eyedropper, or the picker's, samples the canvas instead of moving the light.
+        if session.filterEdit?.kind == .volumetricLight, session.eyedropper == nil, !spaceHeld, let document = session.document {
             session.moveVolumetricLight(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             volumetricDrag = true
             synchronizeDisplay()

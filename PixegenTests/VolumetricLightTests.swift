@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CoreImage
 import Foundation
@@ -55,6 +56,62 @@ struct VolumetricLightTests {
         while edit.previewTask != nil || edit.preparedPreview == nil { try await Task.sleep(for: .milliseconds(20)) }
         #expect(edit.preparedPreview != nil)
         session.cancelFilter()
+    }
+
+    /// With the panel open a click on the canvas moves the light, but not while an eyedropper is out: the well's own
+    /// sets the light's color, and the picker's sets the picker's (PBX-32).
+    @MainActor @Test func eyedroppersSampleTheCanvasRatherThanMovingTheLight() throws {
+        let source = DepthModel.source
+        defer { DepthModel.source = source }
+        DepthModel.source = FileManager.default.temporaryDirectory.appendingPathComponent("no-depth-model-\(UUID().uuidString)/")
+        let session = EditorSession()
+        session.createDocument(width: width, height: height, emptyLayer: true)
+        let image = try room()
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Room"))
+        session.beginFilter(.volumetricLight)
+        defer { session.cancelFilter() }
+        let center = try #require(session.filterEdit?.settings.volumetric.center)
+
+        let view = CanvasView(session: session)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        let size = try #require(session.document?.size)
+        session.viewport.resize(to: view.bounds.size, backingScale: 1, documentSize: size)
+        view.synchronizeDisplay()
+        view.displayIfNeeded()
+        /// A click on the dark floor, well away from the window.
+        func click() throws {
+            let p = session.viewport.viewPoint(from: CGPoint(x: 100, y: 320), documentSize: size)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: p.x, y: view.bounds.height - p.y),
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                    clickCount: 1, pressure: 1))
+                if type == .leftMouseDown { view.mouseDown(with: event) } else { view.mouseUp(with: event) }
+            }
+        }
+
+        // The well's eyedropper.
+        session.beginEyedropper(intoPicker: false) { picked in
+            session.pickColor(picked, opening: { session.openVolumetricLightColorPicker() })
+        }
+        try click()
+        let light = try #require(session.filterEdit?.settings.volumetric)
+        #expect(light.color.red < 0.1 && light.color.blue < 0.1, "the floor's color, not the default warm light")
+        #expect(light.center == center, "the light stayed put")
+        #expect(session.eyedropper == nil && session.colorPicker == nil)
+
+        // The picker's eyedropper, then OK.
+        session.filterEdit?.settings.volumetric.color = AdjustmentColor(red: 1, green: 0.86, blue: 0.68)
+        session.openVolumetricLightColorPicker()
+        session.beginEyedropper(intoPicker: true)
+        try click()
+        #expect(try #require(session.colorPicker).color.red < 0.1, "the picker took the floor's color")
+        session.closeColorPicker(commit: true)
+        let picked = try #require(session.filterEdit?.settings.volumetric)
+        #expect(picked.color.red < 0.1 && picked.center == center)
     }
 
     @Test func theLightStartsOnTheBrightestSpot() throws {
