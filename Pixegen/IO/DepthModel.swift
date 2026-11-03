@@ -31,7 +31,7 @@ nonisolated enum DepthModel {
     static var folder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("Compositor/Depth Model \(files[2].sha256.prefix(12))", isDirectory: true)
+        return base.appendingPathComponent("Pixegen/Depth Model \(files[2].sha256.prefix(12))", isDirectory: true)
     }
     private static var compiled: URL { folder.appendingPathComponent("DepthMini.mlmodelc", isDirectory: true) }
 
