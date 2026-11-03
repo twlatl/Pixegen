@@ -539,6 +539,15 @@ enum ColorPickerTarget: Equatable {
     case text(draftID: UUID?)
     /// A dialog's own color, such as Export JPEG's background for transparency. The dialog is told as it changes.
     case dialog(title: String)
+    /// Colors set in a filter panel, the layer effects or a dialog open the picker in its own window, with OK and
+    /// Cancel, rather than in a popover over what opened it. Gradients, and colors that can be one, keep the popover
+    /// for its gradient editor.
+    var opensInWindow: Bool {
+        switch self {
+        case .effect, .vignette, .rimLight, .volumetricLight, .dither, .dialog: true
+        case .palette, .gradient, .dialogPaint, .shapeStroke, .shapeFill, .text: false
+        }
+    }
     var title: String {
         switch self {
         case .text: return "Color Picker (Text Color)"

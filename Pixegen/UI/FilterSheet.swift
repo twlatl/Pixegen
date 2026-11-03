@@ -335,16 +335,7 @@ struct FilterSheet: View {
             Text("Click or drag on the canvas to move the light")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button { session.openVolumetricLightColorPicker() } label: {
-                let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
-                shape.fill(Color(.sRGB, red: color.red, green: color.green, blue: color.blue))
-                    .overlay { shape.inset(by: 1).strokeBorder(.white, lineWidth: 1.5) }
-                    .overlay { shape.strokeBorder(.black, lineWidth: 1) }
-                    .frame(width: 24, height: 24)
-                    .contentShape(shape)
-            }
-            .buttonStyle(.plain)
-            .help("Choose the light's color")
+            swatch(color, title: "Light color") { session.openVolumetricLightColorPicker() }
         }
         control("Haze", \.volumetric.haze, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
             .help("How thick the air is: haze lit by the light, thinner in front of the subject")

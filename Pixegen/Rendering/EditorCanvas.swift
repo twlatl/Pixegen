@@ -2435,6 +2435,7 @@ final class CanvasView: NSView {
                 loupe.isHidden = true
                 restoreToolCursor()
             }
+            if session.colorPicker?.target.opensInWindow == true { ColorPickerPanelController.refocus() }
             return
         }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {

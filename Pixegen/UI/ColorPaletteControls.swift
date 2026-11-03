@@ -8,6 +8,7 @@ struct ColorPaletteControls: View {
     var hostsPicker = true
     @State private var choosingMaskBackground: Bool?
     @State private var popover = ColorPopoverController()
+    @State private var pickerPanel = ColorPickerPanelController()
     @State private var foregroundAnchor = WellAnchor()
     @State private var backgroundAnchor = WellAnchor()
     private let swatchSize: CGFloat = 24
@@ -51,16 +52,16 @@ struct ColorPaletteControls: View {
                 }
             }.padding(16)
         }
-        // Every color well's picker is shown from here, pointing at the well that opened it (or at the foreground
-        // swatch, for one opened from a menu or a key).
+        // Every color well's picker is shown from here: in a popover pointing at the well that opened it (or at the
+        // foreground swatch, for one opened from a menu or a key), or in its own window for a panel's or dialog's color.
         .onChange(of: session.colorPicker.map(ObjectIdentifier.init)) { _, _ in
             guard hostsPicker else { return }
             popover.fallbackAnchor = foregroundAnchor.view
-            if let picker = session.colorPicker {
-                if !session.colorPickerHeadless { popover.show(picker, session: session) }
-            } else if popover.isShown {
-                popover.close()
-            }
+            if popover.isShown { popover.close() }
+            pickerPanel.close()
+            guard let picker = session.colorPicker, !session.colorPickerHeadless else { return }
+            if picker.target.opensInWindow { pickerPanel.show(picker, session: session) }
+            else { popover.show(picker, session: session) }
         }
         .onChange(of: session.isMaskSelected) { _, masked in
             choosingMaskBackground = nil

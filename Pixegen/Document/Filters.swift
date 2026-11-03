@@ -928,6 +928,7 @@ extension EditorSession {
         if case .gradient(.map) = colorPicker?.target { closeColorPicker(commit: true) }
         if case .vignette = colorPicker?.target { closeColorPicker(commit: true) }
         if case .rimLight = colorPicker?.target { closeColorPicker(commit: true) }
+        if case .volumetricLight = colorPicker?.target { closeColorPicker(commit: true) }
         if case .dither = colorPicker?.target { closeColorPicker(commit: true) }
         if finishAdjustmentEditing(commit: true) { return }
         guard let edit = filterEdit, !edit.committing else { return }

@@ -168,6 +168,17 @@ struct ColorWellTests {
         #expect(session.colorPicker == nil && session.foregroundColor == blue, "closing keeps the color")
     }
 
+    /// A filter panel's, the layer effects' or a dialog's color opens the picker in its own window (PBX-32); the
+    /// tool rail's and the tool bars' wells, and anything that can be a gradient, keep the popover.
+    @Test func panelAndDialogColorsOpenThePickerInItsOwnWindow() {
+        let windowed: [ColorPickerTarget] = [.vignette, .rimLight(index: 0), .volumetricLight, .dither(light: true),
+                                             .effect(kind: .stroke), .dialog(title: "Grid Color")]
+        let popover: [ColorPickerTarget] = [.palette(background: false), .gradient(.map), .gradient(.tool),
+                                            .dialogPaint(title: "Fill"), .shapeFill, .shapeStroke, .text(draftID: nil)]
+        #expect(windowed.allSatisfy { $0.opensInWindow })
+        #expect(!popover.contains { $0.opensInWindow })
+    }
+
     @Test func onlyItsWellOrEscapePutsThePickerAway() throws {
         let session = try session()
         let well = NSView(), other = NSView()
