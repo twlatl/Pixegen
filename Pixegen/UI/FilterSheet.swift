@@ -109,6 +109,8 @@ struct FilterSheet: View {
                     .help("Swap From and To: blur the start and sharpen toward the end")
             case .rimLight:
                 rimLightControls
+            case .volumetricLight:
+                volumetricLightControls
             case .motionBlur:
                 control("Angle", \.angle, range: -90...90, unit: "°", decimals: 0, logarithmic: false)
                 control("Distance", \.distance, range: 1...2000, unit: "px", decimals: 0, logarithmic: true)
@@ -176,19 +178,30 @@ struct FilterSheet: View {
                     ProgressView().controlSize(.small)
                     Text(edit?.committing == true ? "Applying…" : "Working…")
                         .font(.callout).foregroundStyle(.secondary)
-                } else if let edit, edit.kind == .rimLight, edit.preparing, !RimLighting.hasSubject(for: edit.hdrPreviewSource ?? edit.previewSource) {
+                } else if edit?.kind == .volumetricLight, session.preparingDepth {
+                    // The first time only: the depth model is downloading (about 2.6 MB).
+                    ProgressView().controlSize(.small)
+                    Text("Getting depth…").font(.callout).foregroundStyle(.secondary)
+                } else if let edit, edit.preparing, edit.kind == .rimLight && !RimLighting.hasSubject(for: edit.hdrPreviewSource ?? edit.previewSource)
+                            || edit.kind == .volumetricLight && !VolumetricLighting.hasLooked(for: edit.hdrPreviewSource ?? edit.previewSource) {
                     // Only the first preview, which finds the subject: relighting it afterwards is quick.
                     ProgressView().controlSize(.small)
                     Text("Finding the subject…").font(.callout).foregroundStyle(.secondary)
                 }
+                if edit?.kind == .volumetricLight {
+                    Button("Extract Depth") { Task { await session.extractDepth() } }
+                        .help("Close the filter and add the depth the haze goes by as a new layer: white is near, black is far")
+                        .disabled(volumetricWaiting)
+                }
                 Button("OK") { Task { await session.commitFilter() } }
                     .configuredNativeShortcut(.return).buttonStyle(.borderedProminent)
-                    .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil))
+                    .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil) || volumetricWaiting)
             }
         }
         .onPreferenceChange(LabelWidthKey.self) { labelWidth = max(60, $0) }
         .padding(24)
-        .frame(width: isCameraRaw ? FloatingPanelController.dockedWidth : 380)
+        // Volumetric Light's a little wider: Extract Depth shares the row with Cancel and OK.
+        .frame(width: isCameraRaw ? FloatingPanelController.dockedWidth : edit?.kind == .volumetricLight ? 440 : 380)
         .frame(maxHeight: isCameraRaw ? .infinity : nil, alignment: .top)
         .fixedSize(horizontal: false, vertical: !isCameraRaw)
 
@@ -309,6 +322,39 @@ struct FilterSheet: View {
     }
 
     /// Rim Light: Glow, then each light's color, angle, strength, width and choke, with room for up to three.
+    /// Volumetric Light's first preview, while it fetches the depth model or finds the subject: Extract Depth and OK
+    /// wait for it (the spinner says what for), and Cancel stays.
+    private var volumetricWaiting: Bool {
+        guard let edit, edit.kind == .volumetricLight else { return false }
+        return session.preparingDepth || edit.preparing && !VolumetricLighting.hasLooked(for: edit.hdrPreviewSource ?? edit.previewSource)
+    }
+
+    @ViewBuilder private var volumetricLightControls: some View {
+        let color = settings.volumetric.color
+        HStack(spacing: 8) {
+            Text("Click or drag on the canvas to move the light")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            swatch(color, title: "Light color") { session.openVolumetricLightColorPicker() }
+        }
+        control("Haze", \.volumetric.haze, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How thick the air is: haze lit by the light, thinner in front of the subject")
+        control("Distance", \.volumetric.distance, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How far into the scene the haze begins: low reaches up to the camera, high leaves all but the farthest parts clear")
+        control("Depth Contrast", \.volumetric.depthContrast, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("Spread out depths bunched together, such as a distant city, so the haze builds through them in steps; 0 keeps the depth as the model sees it")
+        control("Size", \.volumetric.size, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How big the light is")
+        control("Intensity", \.volumetric.intensity, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How bright the beams are")
+        control("Length", \.volumetric.length, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How far from the light the beams reach")
+        control("Shafts", \.volumetric.shafts, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How much the beams break up into separate shafts")
+        Toggle("Keep Subject Clear", isOn: flag(\.volumetric.keepsSubjectClear))
+            .help("Keep the subject clear of the haze; off, it's hazed by its own distance, so a figure far off is misted")
+    }
+
     @ViewBuilder private var rimLightControls: some View {
         let rim = settings.rimLight
         control("Glow", \.rimLight.glow, range: 0...100, unit: "%", decimals: 0, logarithmic: false)

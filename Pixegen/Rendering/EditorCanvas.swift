@@ -119,6 +119,8 @@ final class CanvasView: NSView {
     private var gradientDrag: GradientHandle?
     /// The end of Progressive Blur's line being dragged, while its panel is open.
     private var progressiveDrag: GradientHandle?
+    /// Volumetric Light's light being dragged on the canvas.
+    private var volumetricDrag = false
     private var antsTimer: Timer?
     private var modifierMonitor: Any?
     private var sampleClickMonitor: Any?
@@ -2032,6 +2034,13 @@ final class CanvasView: NSView {
             beginProgressiveDrag(at: point)
             return
         }
+        // A color well's eyedropper, or the picker's, samples the canvas instead of moving the light.
+        if session.filterEdit?.kind == .volumetricLight, session.eyedropper == nil, !spaceHeld, let document = session.document {
+            session.moveVolumetricLight(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            volumetricDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.levels?.sampleMode != nil, !spaceHeld, let document = session.document {
             session.sampleLevels(at: session.viewport.documentPoint(from: point, documentSize: document.size))
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("levelsPanel"))
@@ -2137,6 +2146,11 @@ final class CanvasView: NSView {
         }
         if session.filterEdit?.cameraRawDrag != nil, let document = session.document {
             session.dragCameraRaw(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if volumetricDrag, let document = session.document {
+            session.moveVolumetricLight(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
             return
         }
         if let handle = progressiveDrag, let settings = session.filterEdit?.settings, let document = session.document {
@@ -2373,6 +2387,11 @@ final class CanvasView: NSView {
         window?.invalidateCursorRects(for: self)
     }
     override func mouseUp(with event: NSEvent) {
+        if volumetricDrag {
+            volumetricDrag = false
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
@@ -2417,6 +2436,7 @@ final class CanvasView: NSView {
                 loupe.isHidden = true
                 restoreToolCursor()
             }
+            if session.colorPicker?.target.opensInWindow == true { ColorPickerPanelController.refocus() }
             return
         }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {

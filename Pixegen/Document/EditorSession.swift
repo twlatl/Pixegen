@@ -1295,6 +1295,9 @@ final class EditorSession {
         continuation?.resume(returning: confirmed)
     }
 
+    /// While Volumetric Light's depth model is downloading or loading, the first time it's used (`DepthModel`).
+    var preparingDepth = false
+
     func insertPhotoshop(_ imported: PSDImport, named: String, centeredAt point: CGPoint? = nil) throws {
         beginEdit("Import Photoshop File")
         defer { endEdit() }
