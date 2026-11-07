@@ -588,14 +588,14 @@ extension EditorSession {
     func restyleShape(_ name: String, _ change: (inout LayerShapeStyle) -> Void) {
         guard canEditLayers else { return }
         let layers = shapeBarLayers
-        let restyled = layers.compactMap { layer in restyled(layer, change).map { (layer, $0) } }
-        guard !restyled.isEmpty else { return }
+        let changes = layers.compactMap { layer in restyled(layer, change).map { (layer, $0) } }
+        guard !changes.isEmpty else { return }
         let ids = Set(layers.map(\.id))
         // While the picker is open, everything it does is one step, however long it stays open.
         let continuing = lastShapeRestyle.map { $0.layerIDs == ids && $0.name == name
             && (colorPicker != nil || Date().timeIntervalSince($0.time) < 1.5) } == true && history.canAmendLast(name)
         if !continuing { beginEdit(name) }
-        for (layer, new) in restyled {
+        for (layer, new) in changes {
             guard let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { continue }
             if let mask = layer.mask, mask.placement == nil { document?.layers[index].mask?.placement = layer.maskTransform }
             document?.layers[index].transform = new.transform
