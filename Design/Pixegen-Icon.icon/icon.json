@@ -1,0 +1,84 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:1.00000,0.46939,0.11843,1.00000",
+      "srgb:1.00000,0.00000,0.29698,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "soft-light",
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.11352,0.07680,0.35165,1.00000",
+              "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+            ]
+          },
+          "hidden" : false,
+          "image-name" : "PixegenApp-BG.png",
+          "name" : "PixegenApp-BG",
+          "position" : {
+            "scale" : 1.73,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "hidden" : false,
+          "image-name" : "Parrott.png",
+          "name" : "Parrott",
+          "position" : {
+            "scale" : 1.71,
+            "translation-in-points" : [
+              -107,
+              380
+            ]
+          }
+        },
+        {
+          "hidden" : true,
+          "image-name" : "Generated Image.png",
+          "name" : "Generated Image",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -15,
+              31
+            ]
+          }
+        },
+        {
+          "hidden" : true,
+          "image-name" : "parrott 3.png",
+          "name" : "parrott 3",
+          "position" : {
+            "scale" : 2.96,
+            "translation-in-points" : [
+              -741,
+              672
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

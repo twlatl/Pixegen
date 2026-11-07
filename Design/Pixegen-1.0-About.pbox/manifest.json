@@ -1,0 +1,149 @@
+{
+  "activeLayerID" : "4E08EE70-646F-4622-8F72-84598E94132C",
+  "colorSpace" : "sRGB",
+  "documentID" : "B7DD5504-B575-4A05-9CDA-A5A547A1E2E8",
+  "format" : "net.pixegen.pixegen.project",
+  "height" : 1280,
+  "layers" : [
+    {
+      "blendMode" : "Normal",
+      "id" : "68F3C0F1-C520-45E2-8A2B-ADF7C707FC0A",
+      "imageFile" : "68F3C0F1-C520-45E2-8A2B-ADF7C707FC0A.png",
+      "isGroup" : false,
+      "isVisible" : true,
+      "name" : "Screenshot 2026-10-27 at 2.42.13 PM",
+      "opacity" : 1,
+      "transform" : {
+        "flipX" : false,
+        "flipY" : false,
+        "origin" : [
+          0,
+          -26
+        ],
+        "rotation" : 0,
+        "sampling" : "High quality",
+        "size" : [
+          1744,
+          1578
+        ]
+      }
+    },
+    {
+      "blendMode" : "Normal",
+      "id" : "4E08EE70-646F-4622-8F72-84598E94132C",
+      "imageFile" : "4E08EE70-646F-4622-8F72-84598E94132C.png",
+      "isGroup" : false,
+      "isVisible" : true,
+      "name" : "Layer 1",
+      "opacity" : 1,
+      "transform" : {
+        "flipX" : false,
+        "flipY" : false,
+        "origin" : [
+          0,
+          0
+        ],
+        "rotation" : 0,
+        "sampling" : "High quality",
+        "size" : [
+          1280,
+          1280
+        ]
+      }
+    },
+    {
+      "blendMode" : "Normal",
+      "id" : "F18ED4E0-F12C-4A42-995A-09D98862D799",
+      "imageFile" : "F18ED4E0-F12C-4A42-995A-09D98862D799.png",
+      "isGroup" : false,
+      "isVisible" : true,
+      "name" : "Screenshot 2026-10-27 at 2.40.10 PM",
+      "opacity" : 1,
+      "transform" : {
+        "flipX" : false,
+        "flipY" : false,
+        "origin" : [
+          0,
+          0
+        ],
+        "rotation" : 0,
+        "sampling" : "High quality",
+        "size" : [
+          1442,
+          61
+        ]
+      }
+    },
+    {
+      "blendMode" : "Normal",
+      "id" : "BC6716CB-AEBF-4FE0-A437-CE9F3EB37095",
+      "isGroup" : false,
+      "isVisible" : true,
+      "name" : "Layer 5",
+      "opacity" : 1,
+      "transform" : {
+        "flipX" : false,
+        "flipY" : false,
+        "origin" : [
+          0,
+          0
+        ],
+        "rotation" : 0,
+        "sampling" : "High quality",
+        "size" : [
+          1280,
+          1280
+        ]
+      }
+    },
+    {
+      "blendMode" : "Normal",
+      "id" : "700827F7-8374-4344-B8AC-B667ABE56E2D",
+      "imageFile" : "700827F7-8374-4344-B8AC-B667ABE56E2D.png",
+      "isGroup" : false,
+      "isVisible" : true,
+      "name" : "Screenshot 2026-10-27 at 2.41.29 PM",
+      "opacity" : 1,
+      "transform" : {
+        "flipX" : false,
+        "flipY" : false,
+        "origin" : [
+          -6,
+          61
+        ],
+        "rotation" : 0,
+        "sampling" : "High quality",
+        "size" : [
+          114,
+          1800
+        ]
+      }
+    }
+  ],
+  "resolution" : 72,
+  "slices" : [
+    {
+      "formats" : [
+        {
+          "advancedCompression" : false,
+          "convertsToSRGB" : true,
+          "id" : "7C3B1EC8-6428-4AF6-B88D-A256EBB11ADC",
+          "keepsTransparency" : true,
+          "limitedPalette" : false,
+          "quality" : 0.8,
+          "scale" : 1,
+          "suffix" : "",
+          "type" : "PNG"
+        }
+      ],
+      "height" : 1280,
+      "id" : "A299B44B-DC1E-4725-9F9C-7CC1DCA7F710",
+      "name" : "Slice 1",
+      "width" : 1280,
+      "x" : 0,
+      "y" : 0
+    }
+  ],
+  "version" : 23,
+  "width" : 1280
+}
