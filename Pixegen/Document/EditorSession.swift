@@ -435,7 +435,7 @@ final class EditorSession {
     /// The view the picker's popover points at: the well that opened it.
     @ObservationIgnored weak var colorPickerAnchor: NSView?
     /// The last change the tool bar made to a shape layer, so the same value changed again soon after joins its undo step.
-    @ObservationIgnored var lastShapeRestyle: (layerID: UUID, name: String, time: Date)?
+    @ObservationIgnored var lastShapeRestyle: (layerIDs: Set<UUID>, name: String, time: Date)?
     /// The shape being dragged out with the Shape tool, before it becomes a layer.
     var shapeDraft: ShapeDraft?
     var selectionModeChoice = SelectionMode.replace

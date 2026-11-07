@@ -118,4 +118,31 @@ struct ShapeRestyleTests {
         #expect(session.activeLayer?.liveShape?.style.customName == shapes[1].name)
         #expect(session.activeLayer?.transform.size == CGSize(width: 40, height: 40), "in the box it had")
     }
+
+    @Test func everySelectedShapeTakesTheChangeAsOneUndoStep() throws {
+        let session = makeSession()
+        draw(session, .rectangle, from: CGPoint(x: 10, y: 10), to: CGPoint(x: 30, y: 30))
+        let first = try #require(session.activeLayerID)
+        draw(session, .ellipse, from: CGPoint(x: 40, y: 10), to: CGPoint(x: 60, y: 30))
+        let second = try #require(session.activeLayerID)
+        draw(session, .rectangle, from: CGPoint(x: 70, y: 10), to: CGPoint(x: 90, y: 30))
+        let unselected = try #require(session.activeLayerID)
+        session.selectTool(.pathSelection)
+        session.selectLayers([first, second], primary: second)
+        func style(_ id: UUID) -> LayerShapeStyle? { session.document?.layers.first { $0.id == id }?.liveShape?.style }
+        let count = session.history.undoCount
+        session.restyleShape("Fill Color") { $0.red = 0; $0.green = 0; $0.blue = 1 }
+        session.restyleShape("Stroke") { $0.stroke = ShapeStroke(color: .black, width: 4) }
+        session.restyleShape("Stroke Options") { $0.stroke?.options = ShapeStrokeOptions(dash: .dashed, join: .round) }
+        for id in [first, second] {
+            #expect(style(id)?.blue == 1 && style(id)?.red == 0, "both selected shapes take the fill")
+            #expect(style(id)?.stroke?.width == 4 && style(id)?.stroke?.options.dash == .dashed, "and the stroke")
+        }
+        #expect(style(unselected)?.red == 1 && style(unselected)?.stroke == nil, "a shape not selected stays as it was")
+        #expect(session.history.undoCount == count + 3, "one step for each change, not for each shape")
+        session.undo()
+        session.undo()
+        session.undo()
+        for id in [first, second] { #expect(style(id)?.red == 1 && style(id)?.stroke == nil) }
+    }
 }

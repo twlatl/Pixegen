@@ -576,30 +576,49 @@ extension EditorSession {
         return pathLayer
     }
 
-    /// Changes the selected shape layer's style and draws it again, keeping its outline where it is: a stroke that
-    /// reaches further grows the layer around it. Changing the same value again straight away (dragging it, typing it)
-    /// adds to the same undo step.
+    /// The shape layers the bar's changes go to: the one it shows, and every other selected shape layer with it.
+    var shapeBarLayers: [ImageLayer] {
+        guard let document, let layer = shapeBarLayer else { return [] }
+        return [layer] + document.layers.filter { $0.id != layer.id && selectedLayerIDs.contains($0.id) && $0.liveShape != nil && !$0.isGroup }
+    }
+
+    /// Changes the selected shape layers' style and draws them again, each keeping its outline where it is: a stroke
+    /// that reaches further grows the layer around it. Every selected shape changes as one undo step, and changing the
+    /// same value again straight away (dragging it, typing it) adds to that step.
     func restyleShape(_ name: String, _ change: (inout LayerShapeStyle) -> Void) {
-        guard canEditLayers, let layer = shapeBarLayer, let shape = layer.liveShape,
-              let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { return }
+        guard canEditLayers else { return }
+        let layers = shapeBarLayers
+        let changes = layers.compactMap { layer in restyled(layer, change).map { (layer, $0) } }
+        guard !changes.isEmpty else { return }
+        let ids = Set(layers.map(\.id))
+        // While the picker is open, everything it does is one step, however long it stays open.
+        let continuing = lastShapeRestyle.map { $0.layerIDs == ids && $0.name == name
+            && (colorPicker != nil || Date().timeIntervalSince($0.time) < 1.5) } == true && history.canAmendLast(name)
+        if !continuing { beginEdit(name) }
+        for (layer, new) in changes {
+            guard let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { continue }
+            if let mask = layer.mask, mask.placement == nil { document?.layers[index].mask?.placement = layer.maskTransform }
+            document?.layers[index].transform = new.transform
+            document?.layers[index].asset = new.asset
+            document?.layers[index].shape = new.shape
+        }
+        if continuing { history.amendLast(document: document, selection: activeLayerID) } else { endEdit() }
+        lastShapeRestyle = (ids, name, Date())
+    }
+
+    /// A shape layer with `change` made to its style, drawn again and placed so its outline stays put; nil when the
+    /// change leaves it as it was or can't be drawn.
+    private func restyled(_ layer: ImageLayer, _ change: (inout LayerShapeStyle) -> Void)
+        -> (transform: LayerTransform, asset: ImportedImage, shape: LayerShape)? {
+        guard let shape = layer.liveShape, let asset = layer.asset else { return nil }
         var style = shape.style
         change(&style)
         guard style != shape.style, style.isValid,
-              let placed = Self.restyled(from: shape.style, to: &style, transform: layer.transform) else { return }
+              let placed = Self.restyled(from: shape.style, to: &style, transform: layer.transform) else { return nil }
         let size = CGSize(width: max(1, placed.size.width.rounded()), height: max(1, placed.size.height.rounded()))
         guard Int(size.width) * Int(size.height) <= Self.maxShapePixels,
-              let image = try? Self.shapeImage(style, size: size), let thumbnail = try? PixelInvert.thumbnail(of: image),
-              let asset = layer.asset else { return }
-        // While the picker is open, everything it does is one step, however long it stays open.
-        let continuing = lastShapeRestyle.map { $0.layerID == layer.id && $0.name == name
-            && (colorPicker != nil || Date().timeIntervalSince($0.time) < 1.5) } == true && history.canAmendLast(name)
-        if !continuing { beginEdit(name) }
-        if let mask = layer.mask, mask.placement == nil { document?.layers[index].mask?.placement = layer.maskTransform }
-        document?.layers[index].transform = placed
-        document?.layers[index].asset = ImportedImage(image: image, thumbnail: thumbnail, name: asset.name)
-        document?.layers[index].shape = LayerShape(style: style, image: image)
-        if continuing { history.amendLast(document: document, selection: activeLayerID) } else { endEdit() }
-        lastShapeRestyle = (layer.id, name, Date())
+              let image = try? Self.shapeImage(style, size: size), let thumbnail = try? PixelInvert.thumbnail(of: image) else { return nil }
+        return (placed, ImportedImage(image: image, thumbnail: thumbnail, name: asset.name), LayerShape(style: style, image: image))
     }
 
     /// The placement that keeps a shape's outline where it is once its style reaches further, or less far, past it.

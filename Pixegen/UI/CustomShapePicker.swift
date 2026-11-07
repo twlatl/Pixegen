@@ -168,9 +168,12 @@ struct CustomShapePicker: View {
         selection = shape.id
         session.cancelShape()
         session.customShape = shape
-        // A selected custom shape layer takes the new shape, in the box it already has.
+        // Selected custom shape layers take the new shape, each in the box it already has.
         if session.shapeBarLayer?.liveShape?.style.customName != nil {
-            session.restyleShape("Custom Shape") { $0.outline = shape.outline; $0.customName = shape.name }
+            session.restyleShape("Custom Shape") { style in
+                guard style.customName != nil else { return }
+                style.outline = shape.outline; style.customName = shape.name
+            }
         } else {
             session.shapeKind = .custom
         }

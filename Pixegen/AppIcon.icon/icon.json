@@ -7,34 +7,45 @@
       "layers" : [
         {
           "hidden" : true,
-          "image-name" : "Pixegen-Dark-Foreground-3.svg",
-          "name" : "Pixegen-Dark-Foreground-3",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -11,
-              -13
-            ]
-          }
+          "image-name" : "Pixegen-Tach-Dark-70-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-70-Foreground"
         },
         {
-          "blend-mode" : "hard-light",
-          "glass" : true,
-          "image-name" : "Pixegen-Dark-Foreground-3.svg",
-          "name" : "Pixegen-Dark-Foreground-3",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -2,
-              2
-            ]
-          }
+          "hidden" : true,
+          "image-name" : "Pixegen-Tach-Dark-60-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-60-Foreground"
         },
         {
-          "glass" : true,
-          "image-name" : "Pixegen-Dark-Background.svg",
-          "name" : "Pixegen-Dark-Background",
-          "opacity" : 0.51
+          "hidden" : true,
+          "image-name" : "Pixegen-Tach-Dark-50-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-50-Foreground"
+        },
+        {
+          "hidden" : true,
+          "image-name" : "Pixegen-Tach-Dark-40-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-40-Foreground"
+        },
+        {
+          "hidden" : true,
+          "image-name" : "Pixegen-Tach-Dark-30-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-30-Foreground"
+        },
+        {
+          "hidden" : true,
+          "image-name" : "Pixegen-Tach-Dark-20-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-20-Foreground"
+        },
+        {
+          "blend-mode" : "normal",
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "Pixegen-Tach-Dark-10-Foreground.svg",
+          "name" : "Pixegen-Tach-Dark-10-Foreground"
+        },
+        {
+          "glass" : false,
+          "image-name" : "Pixegen-Tach-Dark-10-Background.svg",
+          "name" : "Pixegen-Tach-Dark-10-Background"
         }
       ],
       "shadow" : {
