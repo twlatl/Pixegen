@@ -31,6 +31,8 @@ struct ColorSwatchesPanel: View {
 
     @AppStorage("colorPalette.tab") private var tab = Tab.color
     @AppStorage("colorPalette.visible") private var isVisible = true
+    /// Folded down to its title row by the triangle at its right.
+    @AppStorage("colorPalette.collapsed") private var isCollapsed = false
     @AppStorage("swatches.layout") private var layout = Layout.largeThumbnail
     @AppStorage("swatches.showsSearch") private var showsSearch = true
     @State private var hsb = PickerHSB(.black)
@@ -44,16 +46,19 @@ struct ColorSwatchesPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
-            Group {
-                switch tab {
-                case .color: colorTab
-                case .swatches: swatchesTab
+            if !isCollapsed {
+                Divider()
+                Group {
+                    switch tab {
+                    case .color: colorTab
+                    case .swatches: swatchesTab
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(width: width, height: Self.height)
+        // Folded, only as tall as the title row.
+        .frame(width: width, height: isCollapsed ? nil : Self.height)
         .alert(namingTitle, isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
             TextField("Name", text: $nameDraft)
             Button("OK") { commitName() }
@@ -71,6 +76,9 @@ struct ColorSwatchesPanel: View {
             Menu { panelMenu } label: { Image(systemName: "line.3.horizontal") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Swatches options").accessibilityLabel("Swatches options")
+            PanelDisclosureButton(isCollapsed: $isCollapsed, panel: "Color")
+                // Into the row's padding by the square's slack, so it lines up with the Layers triangle below.
+                .padding(.horizontal, -8)
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
