@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 
 /// What a camera recorded, before anyone decided how it should look. The file holds one value per
 /// photosite at 12–14 bits; every choice a JPEG has already baked in — exposure, white balance,
-/// contrast — is still open. Pixegen's layers are 8-bit, so that latitude has to be spent at
-/// import: these are the controls for spending it deliberately rather than accepting a default.
+/// contrast — is still open. A RAW is developed at the camera's own settings into a 16-bit layer, and graded from
+/// there in Camera Raw (see `RawPhoto`).
 nonisolated struct RawDevelopSettings: Equatable, Sendable {
     /// Stops of exposure, either side of what the camera recorded.
     var exposure: Float = 0
@@ -50,8 +50,7 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable {
 }
 
 nonisolated enum RawImporter {
-    /// One context for every develop: building a CIContext allocates GPU resources, and the sheet
-    /// develops again on each slider move. Half-float in linear light throughout, named rather than left to
+    /// One context for every develop: building a CIContext allocates GPU resources. Half-float in linear light throughout, named rather than left to
     /// Core Image's defaults, so nothing is rounded before the final 8-bit pixels.
     private static let context = CIContext(options: [
         .useSoftwareRenderer: false,
@@ -59,37 +58,14 @@ nonisolated enum RawImporter {
         .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!,
     ])
 
-    /// Developing a RAW is seconds of work, so only one runs at a time and the caller waits its
-    /// turn. Without this a dragged slider starts a render per pixel moved and they all pile up.
-    ///
-    /// The preview keeps its filter between renders, which is what makes the sliders feel live:
-    /// building a new CIRAWFilter decodes the file again (about 1.5s here), while changing exposure
-    /// or white balance on one that already exists costs nothing measurable.
+    /// Developing a RAW is seconds of work, so only one runs at a time, off the main actor, and the caller waits its turn.
     actor Queue {
         static let shared = Queue()
-        private var cached: (url: URL, limit: CGFloat, filter: CIRAWFilter)?
 
         /// `sixteenBit`: the full frame at 16 bits a channel, for a 16-bit layer (`DeepLayer`); otherwise dithered to 8.
         func develop(_ url: URL, settings: RawDevelopSettings, limit: CGFloat?, sixteenBit: Bool = false) -> CGImage? {
-            guard let limit else { return try? RawImporter.develop(url, settings: settings, limit: nil, sixteenBit: sixteenBit) }
-            let filter: CIRAWFilter
-            if let cached, cached.url == url, cached.limit == limit {
-                filter = cached.filter
-            } else {
-                guard let made = CIRAWFilter(imageURL: url) else { return nil }
-                let longest = max(made.nativeSize.width, made.nativeSize.height)
-                if longest > limit {
-                    made.scaleFactor = Float(limit / longest)
-                    made.isDraftModeEnabled = true
-                }
-                cached = (url, limit, made)
-                filter = made
-            }
-            return RawImporter.render(filter, settings: settings)
+            try? RawImporter.develop(url, settings: settings, limit: limit, sixteenBit: sixteenBit)
         }
-
-        /// Lets go of the decoded frame when the sheet closes.
-        func release() { cached = nil }
     }
 
     /// Every camera RAW the system can develop — 30 formats, from Canon and Nikon to DNG — rather
@@ -118,8 +94,8 @@ nonisolated enum RawImporter {
         return settings
     }
 
-    /// The developed image. `limit` caps the long edge for the preview the sheet shows while the
-    /// sliders move; the import itself passes nil and gets the full frame.
+    /// The developed image. `limit` caps the long edge, for a quick smaller copy; the import passes nil and gets the
+    /// full frame.
     static func develop(_ url: URL, settings: RawDevelopSettings, limit: CGFloat? = nil, sixteenBit: Bool = false) throws -> CGImage {
         guard let filter = CIRAWFilter(imageURL: url) else { throw ImageImportError.unreadable }
         if let limit {

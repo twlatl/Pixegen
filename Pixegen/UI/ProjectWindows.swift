@@ -250,7 +250,7 @@ private struct TabViewHost: NSViewControllerRepresentable {
     func updateNSViewController(_ controller: NSTabViewController, context: Context) {}
 }
 
-/// New canvas, the app's name, and the zoom buttons, for the project shown.
+/// New canvas, the app's name, Camera RAW for a RAW's layer, and the zoom buttons, for the project shown.
 private struct EditorToolbar: ToolbarContent {
     let tab: ProjectTab
     let workspace: ProjectWorkspace
@@ -268,6 +268,14 @@ private struct EditorToolbar: ToolbarContent {
                 .accessibilityIdentifier("appTitle")
         }
         .sharedBackgroundVisibility(.hidden)
+        // While a layer opened from a camera RAW file is active: its Camera Raw settings, to grade it again.
+        if session.showsCameraRawButton {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Camera RAW") { session.editRawPhoto() }.help("Edit this RAW photo's Camera Raw settings")
+                    .accessibilityIdentifier("cameraRawToolbar").disabled(!session.canEditRawPhoto)
+                    .padding(.horizontal, 4)
+            }
+        }
         ToolbarItem(placement: .primaryAction) {
             Button("Fit") { session.fit() }.help("Fit canvas in window (⌘0)")
                 .accessibilityIdentifier("fitCanvas").disabled(session.document == nil)
@@ -299,7 +307,6 @@ private struct ProjectWindowContent: View {
         ContentView(session: tab.session, applicationDelegate: applicationDelegate)
             .disabled(applicationDelegate.workspace.isManaging)
             .psdConversionSheet(tab.session)
-            .rawDevelopSheet(tab.session)
             .roundedControls()
     }
 }

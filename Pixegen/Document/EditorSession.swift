@@ -5,7 +5,7 @@ struct ImageLayer: Identifiable, Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.name == rhs.name && lhs.isVisible == rhs.isVisible && lhs.transform == rhs.transform
             && lhs.asset?.image === rhs.asset?.image && lhs.parentID == rhs.parentID && lhs.isGroup == rhs.isGroup && lhs.opacity == rhs.opacity && lhs.blendMode == rhs.blendMode && lhs.mask == rhs.mask && lhs.maskSourceID == rhs.maskSourceID && lhs.adjustment == rhs.adjustment && lhs.shape == rhs.shape && lhs.text == rhs.text && lhs.effects == rhs.effects
-            && lhs.gifAnimation == rhs.gifAnimation
+            && lhs.gifAnimation == rhs.gifAnimation && lhs.rawPhoto == rhs.rawPhoto
     }
     let id: UUID
     var asset: ImportedImage?
@@ -27,6 +27,8 @@ struct ImageLayer: Identifiable, Equatable {
     /// A stroke and drop shadow drawn around the layer, kept apart from its pixels.
     var effects: LayerEffects?
     var text: LayerText?
+    /// Set on a layer opened from a camera RAW file; see `RawPhoto`.
+    var rawPhoto: RawPhoto?
     nonisolated var size: CGSize { transform.size }
 
     init(asset: ImportedImage, origin: CGPoint) {
@@ -792,43 +794,6 @@ final class EditorSession {
     var conversionRequest: PSDConversionRequest?
     /// Tests assign this to skip the conversion sheet.
     @ObservationIgnored var confirmConversions: (([PSDConversion]) async -> Bool)?
-    /// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
-    var rawDevelop: (url: URL, settings: RawDevelopSettings)?
-    var showsRawDevelop = false { didSet { resumeFileRequests() } }
-    /// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
-    var rawImporting = false
-    /// Camera Raw… was pressed: once the import is done, the Camera Raw Filter opens on the RAW's layer.
-    @ObservationIgnored private var rawOpensCameraRaw = false
-    @ObservationIgnored private var cameraRawAfterImport: UUID?
-    @ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
-    /// Tests assign this to develop without a sheet.
-    @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
-
-    /// Puts the develop sheet up and waits for the choice; nil means the import was cancelled.
-    func developRaw(_ url: URL) async -> RawDevelopSettings? {
-        let asShot = RawImporter.asShot(url) ?? RawDevelopSettings()
-        if let confirmRawDevelop { return await confirmRawDevelop(url, asShot) }
-        return await withCheckedContinuation { continuation in
-            rawContinuation = continuation
-            rawDevelop = (url, asShot)
-            showsRawDevelop = true
-        }
-    }
-    func finishRawDevelop(_ settings: RawDevelopSettings?, openingCameraRaw: Bool = false) {
-        rawOpensCameraRaw = settings != nil && openingCameraRaw
-        // Importing, the sheet waits for the develop to finish (see `endRawDevelop`); cancelling closes it now.
-        if settings != nil, rawContinuation != nil { rawImporting = true } else { endRawDevelop() }
-        let continuation = rawContinuation
-        rawContinuation = nil
-        continuation?.resume(returning: settings)
-    }
-    /// Closes the develop sheet once the RAW is in, or when it was cancelled.
-    func endRawDevelop() {
-        showsRawDevelop = false
-        rawImporting = false
-        rawDevelop = nil
-        Task { await RawImporter.Queue.shared.release() }
-    }
     @ObservationIgnored private var conversionContinuation: CheckedContinuation<Bool, Never>?
     /// Cancel pressed while a Photoshop file was still being read.
     @ObservationIgnored private var conversionCancelled = false
@@ -1099,15 +1064,13 @@ final class EditorSession {
                     guard let size = RawImporter.pixelSize(url) else { throw ImageImportError.unreadable }
                     guard size.width <= DocumentLimits.maxSide, size.height <= DocumentLimits.maxSide,
                           size.width * size.height <= DocumentLimits.documentPixelBudget - usedPixels else { throw ImageImportError.tooLarge }
-                    guard let settings = await developRaw(url) else { continue }
-                    defer { if rawImporting { endRawDevelop() } }
-                    // Seconds of work: off the main actor, or pressing Import freezes the window.
+                    // Developed as the camera shot it and put straight on the canvas; the toolbar's Camera RAW button
+                    // grades it from there. Seconds of work: off the main actor, or opening it freezes the window.
                     // A 16-bit layer: a RAW's latitude stays for later Levels, Curves and Camera Raw (`DeepLayer`).
+                    let settings = RawImporter.asShot(url) ?? RawDevelopSettings()
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
-                    insert(try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent), centeredAt: point)
-                    if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }
-                    rawOpensCameraRaw = false
+                    insertRawPhoto(try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent), centeredAt: point)
                 } else if UTType(filenameExtension: url.pathExtension)?.conforms(to: .svg) == true {
                     let asset = try await ImageImporter.shared.decodeSVG(url, fitting: document?.size,
                                                                          remainingPixels: DocumentLimits.documentPixelBudget - usedPixels)
@@ -1154,13 +1117,6 @@ final class EditorSession {
         }
         isImporting = false
         if !failures.isEmpty { importError = failures.joined(separator: "\n\n") }
-        if let layer = cameraRawAfterImport {
-            cameraRawAfterImport = nil
-            if document?.layers.contains(where: { $0.id == layer }) == true {
-                selectLayer(layer)
-                beginFilter(.cameraRaw)
-            }
-        }
     }
 
     func insert(_ asset: ImportedImage, centeredAt point: CGPoint? = nil, gifAnimation: GIFAnimation? = nil) {
