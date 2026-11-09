@@ -99,9 +99,10 @@ extension EditorSession {
 
 /// The Layers panel's title row: "Layers", with a magnifier that turns the title into a search field for layer names
 /// (and itself into a close button), and a funnel that opens the type filter (blue while one is on). Escape on an
-/// empty search, or the close button, puts the title back.
+/// empty search, or the close button, puts the title back. The triangle at the right folds the panel to this row.
 struct LayersHeader: View {
     @Bindable var session: EditorSession
+    @Binding var isCollapsed: Bool
     @State private var searching = false
     /// Whether the funnel's type-filter panel is open.
     @State private var isPresentingFilter = false
@@ -110,7 +111,7 @@ struct LayersHeader: View {
         HStack(spacing: 2) {
             if searching {
                 LayerSearchField(text: $session.layerSearchText) { searching = false }
-                    .padding(.trailing, 6)
+                    .padding(.trailing, 6).disabled(hasNoLayers)
             } else {
                 Text("Layers").font(.system(size: 12, weight: .semibold))
                 Spacer()
@@ -123,18 +124,24 @@ struct LayersHeader: View {
                 .help(searching ? "Close the search" : "Search layers by name")
                 .accessibilityLabel(searching ? "Close search" : "Search layers")
                 .accessibilityIdentifier("layerSearchButton")
+                .disabled(hasNoLayers)
             Button { isPresentingFilter.toggle() } label: {
                 headerIcon("line.3.horizontal.decrease", active: !session.layerTypeFilter.isEmpty)
             }
             .buttonStyle(.plain)
             .help("Show only some kinds of layer").accessibilityLabel("Filter the layer list")
             .popover(isPresented: $isPresentingFilter) { typeFilterPopover }
+            .disabled(hasNoLayers)
+            // Not disabled with the others: the panel folds and opens with or without layers.
+            PanelDisclosureButton(isCollapsed: $isCollapsed, panel: "Layers")
         }
         // As tall as the search field, so the row keeps its height when the title turns into one.
         .frame(height: 30)
         .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 10)
-        .disabled(session.document?.layers.isEmpty != false)
     }
+
+    /// Search and the type filter have nothing to act on.
+    private var hasNoLayers: Bool { session.document?.layers.isEmpty != false }
 
     /// A title-row icon with room around it to click: the whole square, not just the glyph.
     private func headerIcon(_ name: String, active: Bool = false) -> some View {
