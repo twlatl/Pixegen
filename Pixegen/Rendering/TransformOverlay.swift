@@ -374,8 +374,8 @@ final class TransformOverlay: NSView {
     }
 
     /// With the Path Selection tool, the active shape's path and its anchor points: filled where selected, hollow
-    /// where not, with the handles of the selected points. With the Pen tool, between paths, its points all hollow,
-    /// to add to or take away from.
+    /// where not, with the handles of the selected points. With the Pen tool, between paths, its points too, to add
+    /// to, take away from or convert: those Command or Convert Point picked are filled, their handles out.
     private func drawShapePath() {
         let pen = session.tool == .pen && session.penDraft == nil
         guard session.tool == .pathSelection || pen, let knots = session.pathKnotsInDocument, let transform = documentToView,
@@ -386,14 +386,14 @@ final class TransformOverlay: NSView {
         }
         guard let outline = ShapeOutline.path(of: knots).copy(using: &toView) else { return }
         CanvasView.strokeOutline(outline, in: context)
-        let selected = pen ? [] : session.shownPathKnots
+        let selected = pen ? session.selectedPathKnots : session.shownPathKnots
         context.saveGState()
         context.setLineWidth(1)
         for (subpathIndex, subpath) in knots.enumerated() {
             for (index, knot) in subpath.knots.enumerated() {
                 let anchor = knot.anchor.applying(transform)
                 let isSelected = selected.contains(PathKnot(subpath: subpathIndex, knot: index))
-                if isSelected, session.pathSelectionMode == .direct {
+                if isSelected, pen || session.pathSelectionMode == .direct {
                     for handle in [knot.incoming, knot.outgoing] where handle != knot.anchor {
                         let point = handle.applying(transform)
                         context.setStrokeColor(NSColor.systemBlue.cgColor)

@@ -1,13 +1,14 @@
 import AppKit
 
-/// The Pen tool's modes, as Photoshop's Pen tools: three that draw a new path and two that add and remove points on a
-/// shape's path.
+/// The Pen tool's modes, as Photoshop's Pen tools: three that draw a new path, two that add and remove points on a
+/// shape's path, and one that turns its points between corners and curves.
 nonisolated enum PenMode: String, CaseIterable, Sendable {
     case pen = "Pen"
     case freeform = "Freeform Pen"
     case curvature = "Curvature Pen"
     case addAnchor = "Add Anchor Point"
     case deleteAnchor = "Delete Anchor Point"
+    case convertPoint = "Convert Point"
     var toolName: String { "\(rawValue) Tool" }
     /// The tool bar's picker, which has less room.
     var shortName: String {
@@ -17,10 +18,13 @@ nonisolated enum PenMode: String, CaseIterable, Sendable {
         case .curvature: "Curvature"
         case .addAnchor: "Add"
         case .deleteAnchor: "Delete"
+        case .convertPoint: "Convert Point"
         }
     }
     /// Whether the mode draws a new path, rather than editing one already drawn.
     var draws: Bool { self == .pen || self == .freeform || self == .curvature }
+    /// Whether holding Option makes the mode Convert Point for as long as it's held.
+    var optionConverts: Bool { self == .pen || self == .curvature }
 }
 
 /// What the pointer is over with the Pen tool, which its cursor shows.
@@ -56,6 +60,8 @@ struct PenDraft {
     var dragged = false
     /// Option broke the new point's handles during this press: the incoming one stays where it was.
     var brokenIncoming: CGPoint?
+    /// Space is moving the point being placed: how far the pointer was from it when Space went down.
+    var grab: CGPoint?
 
     /// The path as it would be finished now, without the pointer.
     var subpath: ShapeOutline.Subpath {
@@ -362,6 +368,7 @@ extension EditorSession {
         switch penMode {
         case .addAnchor: addAnchorPoint(at: point, tolerance: tolerance)
         case .deleteAnchor: deleteAnchorPoint(at: point, tolerance: tolerance)
+        case .convertPoint: beginConvertPoint(at: point, tolerance: tolerance)
         case .freeform:
             guard canEditLayers else { return }
             penDraft = PenDraft(mode: .freeform, output: penOutput, samples: [point], press: point)
@@ -397,6 +404,7 @@ extension EditorSession {
     /// new point; the Freeform Pen follows the pointer, keeping samples at least `spacing` apart.
     func dragPen(to point: CGPoint, constrain: Bool, breaksHandle: Bool, threshold: CGFloat, spacing: CGFloat) {
         guard var draft = penDraft, let press = draft.press, point.x.isFinite, point.y.isFinite else { return }
+        draft.grab = nil
         if draft.mode == .freeform {
             if let last = draft.samples.last, PenGeometry.distance(last, point) < spacing { return }
             draft.samples.append(point)
@@ -430,12 +438,30 @@ extension EditorSession {
         penDraft = draft
     }
 
+    /// Space, held during the press: the point being placed moves with the pointer, its handles with it, until Space
+    /// is let go and the drag shapes them again. The first point, back at it to close the path, stays where it is.
+    func repositionPenPoint(to point: CGPoint) {
+        guard var draft = penDraft, draft.press != nil, draft.mode != .freeform, !draft.closing, point.x.isFinite, point.y.isFinite,
+              let index = draft.knots.indices.last else { return }
+        var knot = draft.knots[index]
+        let grab = draft.grab ?? CGPoint(x: point.x - knot.anchor.x, y: point.y - knot.anchor.y)
+        draft.grab = grab
+        let dx = point.x - grab.x - knot.anchor.x, dy = point.y - grab.y - knot.anchor.y
+        func shifted(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + dx, y: point.y + dy) }
+        knot = ShapeOutline.Knot(anchor: shifted(knot.anchor), incoming: shifted(knot.incoming), outgoing: shifted(knot.outgoing))
+        draft.knots[index] = knot
+        draft.brokenIncoming = draft.brokenIncoming.map(shifted)
+        draft.press = draft.press.map(shifted)
+        penDraft = draft
+    }
+
     /// The press let go. Closing the path, or the Freeform Pen's one drag, finishes it; `tolerance` is how near its
     /// start a freeform path must end to close, and how closely its curves follow the pointer.
     func endPen(tolerance: CGFloat) {
         guard var draft = penDraft, draft.press != nil else { return }
         draft.press = nil
         draft.brokenIncoming = nil
+        draft.grab = nil
         penDraft = draft
         if draft.mode == .freeform {
             let samples = draft.samples
@@ -460,6 +486,24 @@ extension EditorSession {
     func finishPen() {
         guard let draft = penDraft, draft.press == nil, draft.mode != .freeform else { return }
         commitPen(draft.subpath.knots, closed: false)
+    }
+
+    /// ⌘Return: the path becomes the selection, replacing it. The path being drawn, closed from its last point to
+    /// its first; otherwise the work path; otherwise the active shape's own.
+    func makeSelectionFromPenPath() {
+        if let draft = penDraft {
+            guard draft.press == nil, draft.mode != .freeform else { return }
+            let knots = draft.mode == .curvature
+                ? PenGeometry.curvatureKnots(draft.knots.map(\.anchor), corners: draft.corners, closed: true) : draft.knots
+            let path = ShapeOutline.path(of: [ShapeOutline.Subpath(closed: true, knots: knots)])
+            guard knots.count >= 2, !path.boundingBoxOfPath.isEmpty else { NSSound.beep(); return }
+            penDraft = nil
+            applySelection(path, mode: .replace, name: "Make Selection")
+        } else if workPath != nil {
+            makeSelectionFromWorkPath()
+        } else if let layer = pathLayer, layer.liveShape?.style.kind != .line, let outline = Self.documentOutline(of: layer) {
+            applySelection(outline.path.normalized(using: outline.rule), mode: .replace, name: "Make Selection")
+        }
     }
 
     func cancelPen() {
@@ -569,6 +613,8 @@ extension EditorSession {
         switch penMode {
         case .addAnchor: return segmentHit(at: point, tolerance: tolerance) != nil ? .add : .none
         case .deleteAnchor: return anchorHit(at: point, tolerance: tolerance) != nil ? .delete : .none
+        // Convert Point has one pointer wherever it is.
+        case .convertPoint: return .none
         case .pen, .curvature:
             guard let draft = penDraft, draft.knots.count >= 2, let first = draft.knots.first,
                   PenGeometry.distance(first.anchor, point) <= tolerance else { return .none }
@@ -610,5 +656,50 @@ extension EditorSession {
         beginEdit("Delete Anchor Point")
         applyPath(knots, from: drag, at: index)
         endEdit()
+    }
+
+    /// What Convert Point would take hold of at `point`: a handle of one of the active shape's selected points, whose
+    /// handles are the ones shown, or any shape's anchor point.
+    private func convertHit(at point: CGPoint, tolerance: CGFloat) -> (layer: ImageLayer, hit: PathHit)? {
+        if let layer = pathLayer, layer.liveShape?.style.kind != .line, let path = editablePath(of: layer) {
+            for knot in selectedPathKnots {
+                guard path.document.indices.contains(knot.subpath), path.document[knot.subpath].knots.indices.contains(knot.knot) else { continue }
+                let value = path.document[knot.subpath].knots[knot.knot]
+                if value.outgoing != value.anchor, PenGeometry.distance(value.outgoing, point) <= tolerance { return (layer, .handle(knot, outgoing: true)) }
+                if value.incoming != value.anchor, PenGeometry.distance(value.incoming, point) <= tolerance { return (layer, .handle(knot, outgoing: false)) }
+            }
+        }
+        return anchorHit(at: point, tolerance: tolerance).map { ($0.layer, .anchor($0.knot)) }
+    }
+
+    /// Convert Point, and the Pen with Option held: a press on a smooth point makes it a corner, its handles gone, and
+    /// a drag from a point draws new ones out of it, for a curve; a press on a handle moves that handle alone, breaking
+    /// the curve through its point. One undo step, ended with the drag (`endPathDrag`). False when nothing is there.
+    @discardableResult
+    func beginConvertPoint(at point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard tool == .pen, canEditLayers, point.x.isFinite, point.y.isFinite,
+              let found = convertHit(at: point, tolerance: tolerance) else { return false }
+        let layer = found.layer
+        if layer.id != activeLayerID { selectLayer(layer.id) }
+        guard activeLayerID == layer.id, let shape = layer.liveShape, let path = editablePath(of: layer),
+              let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { return false }
+        var knots = path.unit
+        var moving: Set<PathKnot> = []
+        var changed = false
+        if case .anchor(let knot) = found.hit {
+            let value = knots[knot.subpath].knots[knot.knot]
+            changed = value.incoming != value.anchor || value.outgoing != value.anchor
+            knots[knot.subpath].knots[knot.knot] = ShapeOutline.Knot(anchor: value.anchor)
+            selectedPathKnots = [knot]
+            moving = [knot]
+        }
+        var drag = PathDrag(layerID: layer.id, hit: found.hit, start: point, style: shape.style, transform: layer.transform,
+                            knots: knots, moving: moving)
+        drag.converts = true
+        beginEdit("Convert Point")
+        // A corner clicked stays as it is: a rectangle keeps being a rectangle until a handle is drawn out of it.
+        if changed { applyPath(knots, from: drag, at: index) }
+        pathDrag = drag
+        return true
     }
 }

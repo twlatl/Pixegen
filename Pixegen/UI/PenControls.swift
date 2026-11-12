@@ -31,7 +31,9 @@ struct PenControls: View {
                         .help("Select inside the path (Return)")
                 }
             } else if session.pathLayer == nil {
-                Text(session.penMode == .addAnchor ? "Click a shape's outline to add a point" : "Click a shape's point to remove it")
+                Text(session.penMode == .addAnchor ? "Click a shape's outline to add a point"
+                     : session.penMode == .deleteAnchor ? "Click a shape's point to remove it"
+                     : "Click a shape's point for a corner, or drag from it for a curve")
                     .foregroundStyle(.secondary)
             }
             // Fill and stroke: the selected shape's own, or what the next pen path is drawn with.
@@ -45,11 +47,11 @@ struct PenControls: View {
     }
 }
 
-/// The canvas pointer's nib, with a small badge for each mode but the plain Pen.
+/// The canvas pointer's nib, with a small badge for each mode but the plain Pen; Convert Point's own angle.
 struct PenToolIcon: View {
     var mode: PenMode
     var body: some View {
-        NibShape()
+        NibShape(nib: mode == .convertPoint ? CanvasView.convertPointPath : CanvasView.penNibPath)
             .fill(.primary, style: FillStyle(eoFill: true))
             .overlay(alignment: .topTrailing) {
                 if let badge = mode.badgeSymbol {
@@ -60,8 +62,8 @@ struct PenToolIcon: View {
     }
 
     private struct NibShape: Shape {
+        var nib: CGPath
         func path(in rect: CGRect) -> Path {
-            let nib = CanvasView.penNibPath
             let box = nib.boundingBoxOfPath
             let scale = min(rect.width / box.width, rect.height / box.height)
             var place = CGAffineTransform(translationX: rect.midX - box.midX * scale, y: rect.midY - box.midY * scale).scaledBy(x: scale, y: scale)
@@ -79,11 +81,14 @@ extension PenMode {
         case .curvature: "point.topleft.down.to.point.bottomright.curvepath"
         case .addAnchor: "plus"
         case .deleteAnchor: "minus"
+        case .convertPoint: nil
         }
     }
+    /// The symbol in the flyout, which has no room to draw the pointer itself.
+    var menuSymbol: String { self == .convertPoint ? "angle" : badgeSymbol ?? "pencil.tip" }
 }
 
-/// The Pen tool's flyout: its five modes, the current one checked.
+/// The Pen tool's flyout: its six modes, the current one checked.
 @MainActor
 enum PenToolMenu {
     static func show(for session: EditorSession) {
@@ -95,7 +100,7 @@ enum PenToolMenu {
                 session.penMode = mode
                 session.selectTool(.pen)
             }
-            item.image = NSImage(systemSymbolName: mode.badgeSymbol ?? "pencil.tip", accessibilityDescription: nil)
+            item.image = NSImage(systemSymbolName: mode.menuSymbol, accessibilityDescription: nil)
             item.state = session.tool == .pen && mode == session.penMode ? .on : .off
             // Shown, not bound: P picks the tool, Shift-P the next mode.
             item.keyEquivalent = "p"

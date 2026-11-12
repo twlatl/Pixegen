@@ -384,10 +384,15 @@ struct ShapeDraft: Equatable {
     /// Everything about the shape but its size, fixed when the drag starts.
     let style: LayerShapeStyle
     let mode: ShapeMode
-    let anchor: CGPoint
+    var anchor: CGPoint
     var rect: CGRect
     /// Where a line is being dragged to, so its ends stay exactly where they were put.
     var end: CGPoint? = nil
+    /// Shift or Option held as the press began, with a shape to add to or cut from: the new shape joins the active
+    /// shape layer (or the work path) rather than making a layer of its own.
+    var operation: ShapeOperation? = nil
+    /// Space is moving the shape being drawn: how far the pointer was from its anchor when Space went down.
+    var grab: CGPoint? = nil
     var kind: ShapeKind { style.kind }
     var cornerRadius: CGFloat { style.cornerRadius }
     var smoothing: Bool { style.smoothing == true }
@@ -425,14 +430,23 @@ extension EditorSession {
         return style
     }
 
-    func beginShape(at point: CGPoint) {
+    /// `operation` is what Shift (Combine) or Option (Subtract) asked for as the press began, as in Photoshop. It
+    /// holds only with something to act on: in Shape mode an active shape layer, in Path mode a work path. A line
+    /// has no area to add or take away.
+    func beginShape(at point: CGPoint, operation: ShapeOperation? = nil) {
         guard tool == .shape, canEditLayers, point.x.isFinite, point.y.isFinite else { return }
         if shapeKind == .custom, customShape == nil {
             brushError = "Choose a custom shape in the tool bar first."
             return
         }
         let anchor = CGPoint(x: point.x.rounded(), y: point.y.rounded())
-        shapeDraft = ShapeDraft(style: shapeStyle, mode: shapeMode, anchor: anchor, rect: CGRect(origin: anchor, size: .zero))
+        var draft = ShapeDraft(style: shapeStyle, mode: shapeMode, anchor: anchor, rect: CGRect(origin: anchor, size: .zero))
+        if shapeKind != .line {
+            let target = shapeMode == .path ? workPath != nil
+                : shapeMode == .shape && pathLayer?.liveShape.map { $0.style.kind != .line } == true
+            if target { draft.operation = operation }
+        }
+        shapeDraft = draft
     }
 
     /// The line being dragged, from where it began to where the pointer is, in document pixels.
@@ -445,10 +459,12 @@ extension EditorSession {
     /// center, as in Photoshop.
     func dragShape(to point: CGPoint, square: Bool, fromCenter: Bool) {
         guard var draft = shapeDraft, point.x.isFinite, point.y.isFinite else { return }
-        // Shift on a line snaps its angle to eighths of a turn — flat, upright, or 45° — rather than squaring a box.
+        draft.grab = nil
+        // Shift on a line snaps its angle to steps of 15° — flat, upright, 45° and those between — rather than
+        // squaring a box.
         if draft.kind == .line, square {
             let dx = point.x - draft.anchor.x, dy = point.y - draft.anchor.y
-            let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
+            let angle = (atan2(dy, dx) / (.pi / 12)).rounded() * (.pi / 12)
             let length = hypot(dx, dy)
             let snapped = CGPoint(x: draft.anchor.x + cos(angle) * length, y: draft.anchor.y + sin(angle) * length)
             draft.end = snapped
@@ -465,6 +481,20 @@ extension EditorSession {
         shapeDraft = draft
     }
 
+    /// Space, held during the drag: the shape being drawn moves with the pointer, at the size it has, until Space is
+    /// let go and the drag sizes it again.
+    func repositionShape(to point: CGPoint) {
+        guard var draft = shapeDraft, point.x.isFinite, point.y.isFinite else { return }
+        let grab = draft.grab ?? CGPoint(x: point.x - draft.anchor.x, y: point.y - draft.anchor.y)
+        draft.grab = grab
+        // Whole pixels, as the anchor was to begin with.
+        let dx = (point.x - grab.x).rounded() - draft.anchor.x, dy = (point.y - grab.y).rounded() - draft.anchor.y
+        draft.anchor = CGPoint(x: draft.anchor.x + dx, y: draft.anchor.y + dy)
+        draft.rect = draft.rect.offsetBy(dx: dx, dy: dy)
+        draft.end = draft.end.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
+        shapeDraft = draft
+    }
+
     func cancelShape() {
         if shapeDraft != nil { shapeDraft = nil }
     }
@@ -478,7 +508,8 @@ extension EditorSession {
 
     /// Ends the drag. In Shape mode the shape goes on a new layer above the active one; in Pixels mode it is painted
     /// into the active layer; in Path mode it becomes the work path. A click without a drag makes nothing, and the
-    /// selection is left alone.
+    /// selection is left alone. A draft with an operation is added to, or cut from, the active shape or the work path
+    /// instead.
     func finishShape() {
         guard let draft = shapeDraft else { return }
         shapeDraft = nil
@@ -503,6 +534,8 @@ extension EditorSession {
                 path.move(to: ends.start)
                 path.addLine(to: ends.end)
                 workPath = path
+            } else if let operation = draft.operation, let existing = workPath {
+                workPath = operation.apply(base: (existing, .winding), others: [(style.outline(in: rect), style.fillRule)])
             } else {
                 workPath = style.outline(in: rect)
             }
@@ -510,6 +543,11 @@ extension EditorSession {
             guard style.isFilled || style.stroke != nil || draft.kind == .line else { return }
             Task { await paintShape(style, in: rect, ends: ends) }
         case .shape:
+            if let operation = draft.operation, let base = pathLayer {
+                applyShapeOperation(operation, to: base, others: [(style.outline(in: rect), style.fillRule)], removing: [],
+                                    name: "\(operation.shortName) Shape")
+                return
+            }
             guard style.isFilled || style.stroke != nil || draft.kind == .line else {
                 brushError = "That shape has no fill and no stroke. Turn one of them on in the tool bar."
                 return

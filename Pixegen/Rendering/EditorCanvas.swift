@@ -140,6 +140,10 @@ final class CanvasView: NSView {
     /// Whether Shift squares the Marquee draft. False while a Shift held at the press (which chose Add)
     /// is still down; letting it go arms it, so pressing Shift again squares the shape.
     private var marqueeConstrainArmed = true
+    /// As the Marquee's: a Shift or Option held when a shape's drag began chose Combine or Subtract, and squares the
+    /// shape or draws it from its center only once let go and pressed again.
+    private var shapeSquareArmed = true
+    private var shapeCenterArmed = true
     /// The Marquee draft's latest drag point, so a Shift change can reshape it without a mouse move.
     private var marqueeDragPixel: CGPoint?
     /// While a Marquee is dragged against or past the canvas edge, pans the view toward the pointer.
@@ -264,6 +268,22 @@ final class CanvasView: NSView {
     static let penAddCursor = makePenCursor(badge: .add)
     static let penDeleteCursor = makePenCursor(badge: .delete)
     static let penCloseCursor = makePenCursor(badge: .close)
+    /// Convert Point's open angle, its corner at the origin (y down): one side straight down, the other down and to
+    /// the right. About 12 points each way.
+    static let convertPointPath: CGPath = {
+        let angle = CGMutablePath()
+        angle.addLines(between: [CGPoint(x: 0, y: 13), CGPoint(x: 0, y: 0), CGPoint(x: 9.5, y: 11)])
+        return angle.copy(strokingWithWidth: 1.6, lineCap: .round, lineJoin: .miter, miterLimit: 10).normalized(using: .winding)
+    }()
+    /// The pointer of the Convert Point tool, and of the Pen with Option held.
+    static let convertPointCursor: NSCursor = {
+        let tip = NSPoint(x: 5, y: 5)
+        let angle = NSBezierPath(cgPath: convertPointPath)
+        angle.transform(using: AffineTransform(translationByX: tip.x, byY: tip.y))
+        angle.lineJoinStyle = .round
+        angle.lineWidth = 2
+        return outlinedCursor(size: NSSize(width: 24, height: 26), hotSpot: tip, [(angle, .black, .white)])
+    }()
     /// The Slice tool's pointer: a craft knife, its blade's tip the hot spot.
     static let knifeCursor: NSCursor = {
         let blade = NSBezierPath()
@@ -940,6 +960,11 @@ final class CanvasView: NSView {
             self.session.updateHeldSelectionKeys(shift: event.modifierFlags.contains(.shift),
                                                  option: event.modifierFlags.contains(.option))
             if self.session.tool.isSelectionTool { self.refreshLassoCursor(event.modifierFlags) }
+            // The Pen's pointer says what Command and Option make of it, as they go down and up.
+            if self.session.document != nil, self.session.tool == .pen, !self.spaceHeld, !self.picking, let window = self.window {
+                let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                if self.visibleRect.contains(point) { self.penCursor(at: point).set() }
+            }
             if self.session.document != nil, self.session.tool == .move, let window = self.window {
                 let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
                 if self.visibleRect.contains(point) { self.updateTransformCursor(at: point, flags: event.modifierFlags) }
@@ -1651,7 +1676,9 @@ final class CanvasView: NSView {
         if session.tool == .zoom, !spaceHeld, let drag = zoomDrag, drag.moved {
             return drag.zoomingIn ? Self.zoomInCursor : Self.zoomOutCursor
         }
-        return spaceHeld || session.tool == .hand ? .openHand
+        // Space held while a shape or a pen point is being placed moves that, not the view.
+        let pans = spaceHeld && session.shapeDraft == nil && session.penDraft?.press == nil
+        return pans || session.tool == .hand ? .openHand
             // The Move tool's cursor depends on the pointer (handles, Option to duplicate), so match it here.
             : session.tool == .move ? window.map { transformCursor(at: convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? .arrow
             : session.tool == .type ? typeCursor(at: window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) })
@@ -1675,8 +1702,12 @@ final class CanvasView: NSView {
         return !onText && session.textAreaTarget(at: pixel) != nil ? Self.typeInShapeCursor : .iBeam
     }
 
-    /// The Pen tool's cursor at a view point: its badge says what a click there would do.
+    /// The Pen tool's cursor at a view point: its badge says what a click there would do. With Command held it is
+    /// the Direct Selection arrow, and with Option, Convert Point's angle.
     private func penCursor(at point: CGPoint?) -> NSCursor {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) { return Self.directSelectionCursor }
+        if session.penMode == .convertPoint || (flags.contains(.option) && session.penMode.optionConverts) { return Self.convertPointCursor }
         guard let point, let document = session.document else { return Self.penCursor }
         let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
         switch session.penHover(at: pixel, tolerance: 5 / max(session.viewport.pointsPerPixel, 0.0001)) {
@@ -2109,12 +2140,26 @@ final class CanvasView: NSView {
         } else if session.tool == .type {
             beginTextGesture(at: point, event: event)
         } else if session.tool == .shape, let document = session.document {
-            session.beginShape(at: snappedCorner(session.viewport.documentPoint(from: point, documentSize: document.size),
-                                                 flags: event.modifierFlags))
+            // Shift adds the new shape to the active one and Option cuts it out of it, chosen at the press.
+            let flags = event.modifierFlags
+            session.beginShape(at: snappedCorner(session.viewport.documentPoint(from: point, documentSize: document.size), flags: flags),
+                               operation: flags.contains(.option) ? .subtract : flags.contains(.shift) ? .combine : nil)
+            let operates = session.shapeDraft?.operation != nil
+            shapeSquareArmed = !(operates && flags.contains(.shift))
+            shapeCenterArmed = !(operates && flags.contains(.option))
         } else if session.tool == .pen, let document = session.document {
-            session.beginPen(at: session.viewport.documentPoint(from: point, documentSize: document.size),
-                             tolerance: 5 / max(session.viewport.pointsPerPixel, 0.0001),
-                             constrain: event.modifierFlags.contains(.shift), clickCount: event.clickCount)
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            let tolerance = 5 / max(session.viewport.pointsPerPixel, 0.0001)
+            let flags = event.modifierFlags
+            if flags.contains(.command) {
+                // Command is Direct Selection for as long as it's held: points and handles drag, a shape moves.
+                session.beginPathDrag(at: pixel, tolerance: tolerance, extend: flags.contains(.shift), borrowed: true)
+            } else if flags.contains(.option), session.penMode.optionConverts,
+                      session.beginConvertPoint(at: pixel, tolerance: tolerance) {
+                // Option is Convert Point, on a point or a handle; anywhere else the Pen carries on.
+            } else {
+                session.beginPen(at: pixel, tolerance: tolerance, constrain: flags.contains(.shift), clickCount: event.clickCount)
+            }
             synchronizeDisplay()
         } else if session.tool == .pathSelection, let document = session.document {
             // Points are easy to hit at any zoom: a few screen points either way.
@@ -2226,17 +2271,28 @@ final class CanvasView: NSView {
         }
         if session.penDraft?.press != nil, lastDragPoint == nil, let document = session.document {
             let perPixel = max(session.viewport.pointsPerPixel, 0.0001)
-            session.dragPen(to: session.viewport.documentPoint(from: point, documentSize: document.size),
-                            constrain: event.modifierFlags.contains(.shift), breaksHandle: event.modifierFlags.contains(.option),
-                            threshold: 2 / perPixel, spacing: 1 / perPixel)
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            // Space moves the point being placed; let go, the drag shapes its handles again.
+            if spaceHeld { session.repositionPenPoint(to: pixel) }
+            else {
+                session.dragPen(to: pixel, constrain: event.modifierFlags.contains(.shift),
+                                breaksHandle: event.modifierFlags.contains(.option), threshold: 2 / perPixel, spacing: 1 / perPixel)
+            }
             synchronizeDisplay()
             return
         }
         if session.shapeDraft != nil, lastDragPoint == nil, let document = session.document {
-            // Unlike the Marquee, Option has no other job here, so it draws from the center as in Photoshop.
-            session.dragShape(to: snappedCorner(session.viewport.documentPoint(from: point, documentSize: document.size),
-                                                flags: event.modifierFlags),
-                              square: event.modifierFlags.contains(.shift), fromCenter: event.modifierFlags.contains(.option))
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            let flags = event.modifierFlags
+            if !flags.contains(.shift) { shapeSquareArmed = true }
+            if !flags.contains(.option) { shapeCenterArmed = true }
+            // Space moves the shape being drawn; let go, the drag sizes it again. Shift squares it and Option draws it
+            // from its center, as in Photoshop.
+            if spaceHeld { session.repositionShape(to: pixel) }
+            else {
+                session.dragShape(to: snappedCorner(pixel, flags: flags), square: shapeSquareArmed && flags.contains(.shift),
+                                  fromCenter: shapeCenterArmed && flags.contains(.option))
+            }
             synchronizeDisplay()
             return
         }
@@ -2571,6 +2627,11 @@ final class CanvasView: NSView {
             else { session.removeLastLassoPoint() }
             synchronizeDisplay()
             refreshLassoCursor()
+        } else if session.tool == .pen, [36, 76].contains(event.keyCode),
+                  event.modifierFlags.intersection([.command, .control, .option]) == .command {
+            // ⌘Return makes the path a selection: the one being drawn, the work path, or the active shape's.
+            session.makeSelectionFromPenPath()
+            synchronizeDisplay()
         } else if session.penDraft != nil, [53, 36, 76, 51, 117].contains(event.keyCode) {
             // Return leaves the path open; Delete takes back the last point.
             if event.keyCode == 53 { session.cancelPen() }

@@ -40,6 +40,8 @@ struct PathDrag {
     /// The other selected shapes, which a drag on the shape moves along with it, as they were when it began.
     var companions: [UUID: LayerTransform] = [:]
     var moved = false
+    /// Convert Point's drag: from an anchor it draws that point's handles out, and a handle moves alone.
+    var converts = false
     /// Text on a path: its style when the drag began, the map from its path to the document, and, for a drag on the
     /// text rather than one of its points, the slide along the path.
     var text: LayerTextStyle? = nil
@@ -160,9 +162,10 @@ extension EditorSession {
     }
 
     /// What's under `point` (document pixels): one of the active shape's points or handles, with Direct Selection;
-    /// otherwise the topmost visible shape there. `tolerance` is how near, in document pixels, counts.
-    func pathHit(at point: CGPoint, tolerance: CGFloat) -> PathHit? {
-        if pathSelectionMode == .direct, let knots = pathKnotsInDocument {
+    /// otherwise the topmost visible shape there. `tolerance` is how near, in document pixels, counts. `direct`
+    /// says which arrow, when it isn't the Path Selection tool's own (the Pen's, with Command held).
+    func pathHit(at point: CGPoint, tolerance: CGFloat, direct: Bool? = nil) -> PathHit? {
+        if direct ?? (pathSelectionMode == .direct), let knots = pathKnotsInDocument {
             func near(_ other: CGPoint) -> Bool { hypot(other.x - point.x, other.y - point.y) <= tolerance }
             // The handles shown are those of the selected points.
             for knot in selectedPathKnots {
@@ -201,9 +204,11 @@ extension EditorSession {
     /// A press with the Path Selection tool. Shift adds a point to the ones selected (or takes it away), and on a
     /// shape, adds that shape's layer to the selection (or takes it away) as in Photoshop, keeping the active one:
     /// the shape Combine, Subtract and the rest act on. A press on one of several selected shapes drags them all.
-    func beginPathDrag(at point: CGPoint, tolerance: CGFloat, extend: Bool) {
-        guard tool == .pathSelection, canEditLayers, point.x.isFinite, point.y.isFinite else { return }
-        guard let hit = pathHit(at: point, tolerance: tolerance) else {
+    /// `borrowed` is the Pen tool with Command held, which is Direct Selection for as long as it is.
+    func beginPathDrag(at point: CGPoint, tolerance: CGFloat, extend: Bool, borrowed: Bool = false) {
+        guard tool == .pathSelection || (borrowed && tool == .pen), canEditLayers, point.x.isFinite, point.y.isFinite else { return }
+        let direct = borrowed || pathSelectionMode == .direct
+        guard let hit = pathHit(at: point, tolerance: tolerance, direct: direct) else {
             if !extend { selectedPathKnots = [] }
             return
         }
@@ -228,7 +233,7 @@ extension EditorSession {
                 selectedPathKnots = [knot]
             }
         case .shape:
-            if pathSelectionMode == .direct, !extend { selectedPathKnots = [] }
+            if direct, !extend { selectedPathKnots = [] }
         case .handle: break
         }
         guard let path = selectedPath else { return }
@@ -256,7 +261,7 @@ extension EditorSession {
                 .filter { $0.id != layer.id && selectedLayerIDs.contains($0.id) && $0.liveShape != nil }.map { ($0.id, $0.transform) })
         }
         pathDrag = drag
-        beginEdit(pathSelectionMode == .path || drag.hit == .shape(layer.id) ? (drag.companions.isEmpty ? "Move Path" : "Move Paths") : "Edit Path")
+        beginEdit(!direct || drag.hit == .shape(layer.id) ? (drag.companions.isEmpty ? "Move Path" : "Move Paths") : "Edit Path")
     }
 
     /// Shift-click on a shape: its layer joins the selected ones, or leaves them. The active layer stays active unless
@@ -314,6 +319,12 @@ extension EditorSession {
         func shifted(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + delta.x, y: point.y + delta.y) }
         var knots = drag.knots
         switch drag.hit {
+        case .anchor(let knot) where drag.converts:
+            // The handle ahead follows the pointer, and the one behind mirrors it: a smooth point.
+            guard knots.indices.contains(knot.subpath), knots[knot.subpath].knots.indices.contains(knot.knot) else { return }
+            let anchor = knots[knot.subpath].knots[knot.knot].anchor
+            knots[knot.subpath].knots[knot.knot] = ShapeOutline.Knot(anchor: anchor, incoming: CGPoint(x: anchor.x - delta.x, y: anchor.y - delta.y),
+                                                                     outgoing: shifted(anchor))
         case .anchor:
             for knot in drag.moving where knots.indices.contains(knot.subpath) && knots[knot.subpath].knots.indices.contains(knot.knot) {
                 var value = knots[knot.subpath].knots[knot.knot]
@@ -323,7 +334,7 @@ extension EditorSession {
         case .handle(let knot, let outgoing):
             guard knots.indices.contains(knot.subpath), knots[knot.subpath].knots.indices.contains(knot.knot) else { return }
             var value = knots[knot.subpath].knots[knot.knot]
-            let smooth = !breaksHandle && Self.isSmooth(value)
+            let smooth = !breaksHandle && !drag.converts && Self.isSmooth(value)
             if outgoing { value.outgoing = shifted(value.outgoing) } else { value.incoming = shifted(value.incoming) }
             if smooth {
                 // The other handle keeps its length and turns to stay in line.
