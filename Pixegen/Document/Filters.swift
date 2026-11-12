@@ -448,6 +448,8 @@ final class FilterEdit {
     let original: ImportedImage
     let transform: LayerTransform
     let selection: SelectionClip?
+    /// Camera Raw on a RAW's layer: `original` is the frame as developed at import, not what the layer shows now.
+    var rawPhoto: RawPhoto?
     var mapping: CGAffineTransform
     var previewSource: CGImage
     /// An HDR layer's pixels at the preview's size and grid, which its preview is made from, as OK makes the result from
@@ -721,6 +723,10 @@ extension EditorSession {
         guard var layer = activeLayer, let document else { return }
         pauseGIFForEditing(for: layer.id)
         layer = pixelEditingLayer(for: layer)
+        // A RAW's layer reopens Camera Raw at the settings it has, over the frame as developed at import; its grade covers
+        // the whole frame, whatever is selected. Last Filter grades what the layer shows, which makes it plain pixels.
+        let rawPhoto = kind == .cameraRaw && !repeating ? rawPhoto(of: layer) : nil
+        if let rawPhoto { layer.asset = rawPhoto.original }
         do {
             // An empty layer has no pixels until something is put on it; Vignette starts it with clear ones.
             let startedEmpty = layer.asset == nil
@@ -730,6 +736,7 @@ extension EditorSession {
                 layer.asset = ImportedImage(image: clear, thumbnail: try PixelAdjust.thumbnail(of: clear), name: layer.name)
             }
             var settings = filterSettings
+            if let rawPhoto { settings.cameraRaw = rawPhoto.settings }
             // Progressive Blur starts sharp at the top of the layer's visible part, blurring to its foot; Last Filter
             // keeps the line it had.
             if kind == .progressiveBlur, !repeating {
@@ -755,8 +762,9 @@ extension EditorSession {
             let area = kind == .contentAwareFill
                 ? selection.map { $0.path.boundingBoxOfPath.intersection(canvas) }.flatMap { $0.isNull || $0.isEmpty ? nil : $0 }
                 : fillsCanvas ? canvas : nil
-            let edit = try FilterEdit(kind: kind, layer: layer, selection: selection?.clip(canvas: document.size), settings: settings,
-                                      growingTo: area, canvas: document.size)
+            let edit = try FilterEdit(kind: kind, layer: layer, selection: rawPhoto == nil ? selection?.clip(canvas: document.size) : nil,
+                                      settings: settings, growingTo: area, canvas: document.size)
+            edit.rawPhoto = rawPhoto
             if fillsCanvas { edit.canvas = canvas }
             edit.startedEmpty = startedEmpty
             edit.repeating = repeating
@@ -940,7 +948,8 @@ extension EditorSession {
         // A hidden Camera Raw group is absent from the layer. Remember that rendered grade, including
         // when every remaining amount is zero, so the next open does not put the hidden sliders back.
         let rendered = edit.renderSettings()
-        if edit.kind == .cameraRaw { filterSettings = rendered }
+        // A RAW's grade stays with its layer (`RawPhoto`) rather than becoming where Camera Raw next opens.
+        if edit.kind == .cameraRaw, edit.rawPhoto == nil { filterSettings = rendered }
         // No distortion to remove: close as Cancel does, without an undo step.
         if (edit.kind == .lensCorrection && edit.settings.distortion == 0)
             || (edit.kind == .vignette && edit.settings.vignetteAmount == 0)
@@ -951,7 +960,8 @@ extension EditorSession {
                 (edit.settings.tonalShadows == 0 && edit.settings.tonalMidtones == 0 && edit.settings.tonalHighlights == 0)))
             || (edit.kind == .exposure && edit.settings.exposure == ExposureSettings())
             || (edit.kind == .grain && edit.settings.grain.amount == 0)
-            || (edit.kind == .cameraRaw && rendered.cameraRaw.isIdentity) { cancelFilter(); return }
+            || (edit.kind == .cameraRaw && rendered.cameraRaw.isIdentity && edit.rawPhoto == nil)
+            || (edit.rawPhoto.map { rendered.cameraRaw == $0.settings } ?? false) { cancelFilter(); return }
         edit.committing = true
         edit.previewTask?.cancel()
         if edit.kind != .cameraRaw { filterSettings = edit.settings }
@@ -978,6 +988,8 @@ extension EditorSession {
         job.canvas = edit.canvas
         job.canvasSides = edit.canvasSides
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
+        // A RAW's grade taken back to nothing puts the frame back as it was developed.
+        let undeveloped = edit.rawPhoto.flatMap { rendered.cameraRaw.isIdentity ? $0.original : nil }
         do {
             let grown = keepsOutline ? nil : edit.grownTransform
             let spreads = edit.kind == .gaussianBlur || edit.kind == .motionBlur || edit.kind == .progressiveBlur || edit.kind == .bloomGlow
@@ -991,6 +1003,7 @@ extension EditorSession {
                 edit.grownInside.map { (size: CGSize(width: grownImage.width, height: grownImage.height), inside: $0) }
             }
             let made = try await Task.detached(priority: .userInitiated) { () -> (asset: ImportedImage, transform: LayerTransform?) in
+                if let undeveloped { return (undeveloped, grown) }
                 // Exposure on an HDR layer, exactly: turned down, it brings highlights into view.
                 if let deep, DeepLayer.isHDR(deep), job.kind == .exposure {
                     var result = try DeepLayer.exposure(deep, job.settings.exposure)
@@ -1044,7 +1057,8 @@ extension EditorSession {
             let asset = made.asset
             guard let index = document?.layers.firstIndex(where: { $0.id == edit.layerID }),
                   let current = document?.layers[index],
-                  displayedAsset(for: current)?.image === edit.original.image || (edit.startedEmpty && current.asset == nil),
+                  displayedAsset(for: current)?.image === (edit.rawPhoto?.developed ?? edit.original.image)
+                    || (edit.startedEmpty && current.asset == nil),
                   pixelEditTransformMatches(current, transform: edit.transform) else { return }
             // A grown layer's mask (covering the old grid) is carried onto the new one, its edge tone past the old edge.
             var mask = current.mask
@@ -1056,7 +1070,10 @@ extension EditorSession {
                                                       width: asset.image.width, height: asset.image.height) else { throw ExportError.render }
                 mask = owned.replacing(try LayerMask.asset(from: carried))
             }
-            let edited = try layerByEditingPixels(current, asset: asset, transform: made.transform ?? current.transform, mask: mask)
+            var edited = try layerByEditingPixels(current, asset: asset, transform: made.transform ?? current.transform, mask: mask)
+            if let rawPhoto = edit.rawPhoto {
+                edited.rawPhoto = RawPhoto(original: rawPhoto.original, settings: rendered.cameraRaw, developed: asset.image)
+            }
             beginEdit(edit.kind.rawValue)
             document?.layers[index] = edited
             endEdit()
