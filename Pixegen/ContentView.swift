@@ -328,10 +328,14 @@ struct ContentView: View {
     /// The status bar's hint for the Shape tool, which depends on the shape and on what it makes.
     private var shapeHint: String {
         let kind = session.shapeKind
-        let shift = kind == .line ? "45°" : kind == .ellipse ? "circle" : kind == .custom ? "keep proportions" : "square"
+        let shift = kind == .line ? "15° steps" : kind == .ellipse ? "circle" : kind == .custom ? "keep proportions" : "square"
         let action = session.shapeMode == .path ? "Drag to draw a path · Return makes it a selection"
             : session.shapeMode == .pixels ? "Drag to draw on the active layer" : "Drag to draw a shape on a new layer"
-        return "\(action) · Shift \(shift) · Option from center · Shift-U or Tab for the next shape · Escape cancel · Space to pan"
+        // With a shape to act on, Shift and Option held at the press add to it and cut from it.
+        let operates = kind != .line && (session.shapeMode == .path ? session.workPath != nil
+            : session.shapeMode == .shape && session.pathLayer?.liveShape.map { $0.style.kind != .line } == true)
+        let operations = operates ? " · Press with Shift to add to the shape, Option to subtract" : ""
+        return "\(action) · Shift \(shift) · Option from center · Space mid-drag moves it\(operations) · Shift-U or Tab for the next shape · Escape cancel"
     }
     /// The status bar's hint for the tool in hand.
     private var toolHint: String {
@@ -373,11 +377,12 @@ struct ContentView: View {
     /// The status bar's hint for the Pen tool, which depends on its mode.
     private var penHint: String {
         switch session.penMode {
-        case .pen: "Click for a corner · Drag for a curve · Option-drag breaks the handle · Shift 45° · Click the first point to close · Return leaves it open · Delete removes a point · Escape cancel"
+        case .pen: "Click for a corner · Drag for a curve · Option-drag breaks the handle · Shift 45° · Space mid-drag moves the point · Click the first point to close · Return leaves it open · ⌘Return selects · ⌘ Direct Selection · Option on a point converts it · Delete removes a point · Escape cancel"
         case .freeform: "Drag to draw · End at the start to close · Escape cancel · Space to pan"
         case .curvature: "Click to place points; the curve runs smoothly through them · Double-click a point for a corner · Click the first point to close · Return leaves it open · Delete removes a point"
         case .addAnchor: "Click a shape's outline to add a point · Drag to move it as you add it"
         case .deleteAnchor: "Click a shape's point to remove it"
+        case .convertPoint: "Click a smooth point to make it a corner · Drag from a point to draw out a curve · Drag a handle to move it alone"
         }
     }
     private var welcome: some View {

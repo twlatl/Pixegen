@@ -76,10 +76,19 @@ extension EditorSession {
     func applyShapeOperation(_ operation: ShapeOperation) {
         commitTransform()
         let layers = shapeOperationLayers
-        guard let document, let base = layers.first(where: { $0.id == activeLayerID }), let shape = base.liveShape,
-              let baseOutline = Self.documentOutline(of: base) else { return }
+        guard let base = layers.first(where: { $0.id == activeLayerID }) else { return }
         let others = layers.filter { $0.id != base.id }.compactMap(Self.documentOutline)
         guard others.count == layers.count - 1 else { NSSound.beep(); return }
+        applyShapeOperation(operation, to: base, others: others, removing: Set(layers.map(\.id)).subtracting([base.id]),
+                            name: "\(operation.shortName) Shapes")
+    }
+
+    /// `base`'s outline replaced by what `operation` makes of it and `others` (outlines on the document), and the
+    /// layers in `removed`, which those outlines came from, gone. The Shape tool, drawing with Shift or Option, adds
+    /// an outline that was never a layer.
+    func applyShapeOperation(_ operation: ShapeOperation, to base: ImageLayer, others: [(path: CGPath, rule: CGPathFillRule)],
+                             removing removed: Set<UUID>, name: String) {
+        guard let document, let shape = base.liveShape, let baseOutline = Self.documentOutline(of: base) else { return }
         let result = operation.apply(base: baseOutline, others: others)
         let bounds = result.boundingBoxOfPath
         guard !result.isEmpty, bounds.width >= 1, bounds.height >= 1, let outline = ShapeOutline(path: result) else {
@@ -103,7 +112,6 @@ extension EditorSession {
         }
         guard let image = try? Self.shapeImage(style, size: size), let thumbnail = try? PixelInvert.thumbnail(of: image),
               let asset = base.asset else { NSSound.beep(); return }
-        let removed = Set(layers.map(\.id)).subtracting([base.id])
         var next = document.layers.filter { !removed.contains($0.id) }
         for i in next.indices where next[i].maskSourceID.map(removed.contains) == true {
             next[i].maskSourceID = next[i].id == base.id ? nil : base.id
@@ -121,7 +129,7 @@ extension EditorSession {
         next[index].mask = nil
         guard (try? LayerHierarchy.validate(next.map(\.hierarchyRecord))) != nil else { NSSound.beep(); return }
         finishOpacityEdit()
-        beginEdit("\(operation.shortName) Shapes")
+        beginEdit(name)
         self.document?.layers = next
         activeLayerID = base.id
         endEdit()

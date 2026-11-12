@@ -172,6 +172,56 @@ struct ShapeToolTests {
     }
 
 
+    @Test func spaceMovesTheShapeBeingDrawnAtItsSize() {
+        let session = makeSession()
+        session.beginShape(at: CGPoint(x: 10, y: 10))
+        session.dragShape(to: CGPoint(x: 30, y: 20), square: false, fromCenter: false)
+        session.repositionShape(to: CGPoint(x: 30, y: 20))
+        session.repositionShape(to: CGPoint(x: 50.4, y: 39.6))
+        #expect(session.shapeDraft?.rect == CGRect(x: 30, y: 30, width: 20, height: 10))
+        // Space let go: the drag sizes it again, from where it now starts.
+        session.dragShape(to: CGPoint(x: 60, y: 45), square: false, fromCenter: false)
+        #expect(session.shapeDraft?.rect == CGRect(x: 30, y: 30, width: 30, height: 15))
+        session.finishShape()
+        #expect(session.activeLayer?.transform.origin == CGPoint(x: 30, y: 30))
+    }
+
+    @Test func shiftAtThePressAddsToTheActiveShapeAndOptionCutsFromIt() async throws {
+        let session = makeSession()
+        // With no shape to act on, the new one is its own layer.
+        session.beginShape(at: CGPoint(x: 10, y: 10), operation: .combine)
+        #expect(session.shapeDraft?.operation == nil)
+        session.dragShape(to: CGPoint(x: 40, y: 30), square: false, fromCenter: false)
+        session.finishShape()
+        let layers = session.document?.layers.count
+        let count = session.history.undoCount
+        session.beginShape(at: CGPoint(x: 30, y: 20), operation: .combine)
+        #expect(session.shapeDraft?.operation == .combine)
+        session.dragShape(to: CGPoint(x: 60, y: 50), square: false, fromCenter: false)
+        session.finishShape()
+        #expect(session.document?.layers.count == layers && session.history.undoCount == count + 1)
+        #expect(session.activeLayer?.name == "Rectangle 1" && session.activeLayer?.liveShape?.style.kind == .custom)
+        #expect(session.activeLayer?.transform.origin == CGPoint(x: 10, y: 10))
+        #expect(session.activeLayer?.transform.size == CGSize(width: 50, height: 40))
+        session.beginShape(at: CGPoint(x: 20, y: 0), operation: .subtract)
+        session.dragShape(to: CGPoint(x: 26, y: 60), square: false, fromCenter: false)
+        session.finishShape()
+        #expect(session.document?.layers.count == layers && session.history.undoCount == count + 2)
+        let pixel = try await pixels(session)
+        #expect(pixel(15, 20).alpha == 255 && pixel(23, 20).alpha == 0 && pixel(50, 40).alpha == 255)
+    }
+
+    @Test func shiftSnapsALineToFifteenDegrees() throws {
+        let session = makeSession()
+        session.shapeKind = .line
+        session.beginShape(at: CGPoint(x: 10, y: 10))
+        session.dragShape(to: CGPoint(x: 60, y: 24), square: true, fromCenter: false)
+        let ends = try #require(session.shapeLineEnds)
+        let angle = atan2(ends.end.y - ends.start.y, ends.end.x - ends.start.x) * 180 / .pi
+        #expect(abs(angle - 15) < 0.001)
+        session.cancelShape()
+    }
+
     @Test func shiftUStepsThroughEveryShapeInTheFlyoutsOrder() {
         let session = makeSession()
         var seen: [ShapeKind] = [session.shapeKind]

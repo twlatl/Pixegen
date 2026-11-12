@@ -295,6 +295,125 @@ struct PenToolTests {
             ShapeOutline.Knot(anchor: .zero), ShapeOutline.Knot(anchor: CGPoint(x: 1, y: 1))])]) == nil)
     }
 
+    // MARK: Convert Point
+
+    /// A closed path whose top point, at (50, 20), is smooth: its handles run 20 pixels out to either side.
+    private func arch(_ session: EditorSession) {
+        click(session, CGPoint(x: 10, y: 50))
+        drag(session, from: CGPoint(x: 50, y: 20), to: CGPoint(x: 70, y: 20))
+        click(session, CGPoint(x: 90, y: 50))
+        click(session, CGPoint(x: 10, y: 50))
+    }
+    private func knot(_ session: EditorSession, near point: CGPoint) -> ShapeOutline.Knot? {
+        session.pathKnotsInDocument?.flatMap(\.knots).first { near($0.anchor, point) }
+    }
+
+    @Test func convertPointMakesASmoothPointACornerAndDrawsACurveBackOutOfIt() throws {
+        let session = makeSession()
+        arch(session)
+        let top = CGPoint(x: 50, y: 20)
+        let smooth = try #require(knot(session, near: top))
+        #expect(near(smooth.outgoing, CGPoint(x: 70, y: 20)) && near(smooth.incoming, CGPoint(x: 30, y: 20)))
+        session.penMode = .convertPoint
+        let count = session.history.undoCount
+        session.beginPen(at: top, tolerance: 3, constrain: false, clickCount: 1)
+        session.endPathDrag()
+        let corner = try #require(knot(session, near: top))
+        #expect(near(corner.outgoing, top) && near(corner.incoming, top), "a click takes the handles away")
+        #expect(session.history.undoCount == count + 1)
+        // Clicking a corner changes nothing, and leaves no step to undo.
+        session.beginPen(at: top, tolerance: 3, constrain: false, clickCount: 1)
+        session.endPathDrag()
+        #expect(session.history.undoCount == count + 1)
+        // A drag from it draws the handles out again, one mirroring the other.
+        session.beginPen(at: top, tolerance: 3, constrain: false, clickCount: 1)
+        session.dragPath(to: CGPoint(x: 62, y: 20), breaksHandle: false)
+        session.endPathDrag()
+        let curved = try #require(knot(session, near: top))
+        #expect(near(curved.outgoing, CGPoint(x: 62, y: 20)) && near(curved.incoming, CGPoint(x: 38, y: 20)))
+        #expect(session.history.undoCount == count + 2)
+        // A handle dragged moves alone, breaking the curve.
+        session.beginPen(at: CGPoint(x: 62, y: 20), tolerance: 3, constrain: false, clickCount: 1)
+        session.dragPath(to: CGPoint(x: 62, y: 8), breaksHandle: false)
+        session.endPathDrag()
+        let broken = try #require(knot(session, near: top))
+        #expect(near(broken.outgoing, CGPoint(x: 62, y: 8)) && near(broken.incoming, CGPoint(x: 38, y: 20)))
+        #expect(session.history.undoCount == count + 3)
+    }
+
+    @Test func convertPointLeavesARectangleARectangleUntilACurveIsDrawnOut() {
+        let session = makeSession()
+        session.selectTool(.shape)
+        session.shapeKind = .rectangle
+        session.beginShape(at: CGPoint(x: 10, y: 10))
+        session.dragShape(to: CGPoint(x: 50, y: 40), square: false, fromCenter: false)
+        session.finishShape()
+        session.selectTool(.pen)
+        session.penMode = .convertPoint
+        let corner = anchors(session).first { near($0, CGPoint(x: 50, y: 10), within: 1) } ?? CGPoint(x: 50, y: 10)
+        session.beginPen(at: corner, tolerance: 3, constrain: false, clickCount: 1)
+        session.endPathDrag()
+        #expect(session.activeLayer?.liveShape?.style.kind == .rectangle)
+        session.beginPen(at: corner, tolerance: 3, constrain: false, clickCount: 1)
+        session.dragPath(to: CGPoint(x: corner.x + 8, y: corner.y + 8), breaksHandle: false)
+        session.endPathDrag()
+        #expect(session.activeLayer?.liveShape?.style.kind == .custom)
+        #expect(session.beginConvertPoint(at: CGPoint(x: 100, y: 90), tolerance: 3) == false, "nothing there")
+        #expect(session.pathDrag == nil)
+    }
+
+    // MARK: Modifier keys
+
+    @Test func commandBorrowsDirectSelectionToMoveAPoint() {
+        let session = makeSession()
+        triangle(session)
+        let count = session.history.undoCount
+        session.beginPathDrag(at: CGPoint(x: 50, y: 10), tolerance: 3, extend: false, borrowed: true)
+        #expect(session.selectedPathKnots.count == 1)
+        session.dragPath(to: CGPoint(x: 56, y: 4), breaksHandle: false)
+        session.endPathDrag()
+        #expect(anchors(session).contains { near($0, CGPoint(x: 56, y: 4)) })
+        #expect(session.history.undoCount == count + 1)
+        // Without Command, the Pen has no arrow.
+        session.beginPathDrag(at: CGPoint(x: 10, y: 10), tolerance: 3, extend: false)
+        #expect(session.pathDrag == nil)
+    }
+
+    @Test func spaceMovesThePointBeingPlacedWithItsHandles() throws {
+        let session = makeSession()
+        click(session, CGPoint(x: 10, y: 10))
+        session.beginPen(at: CGPoint(x: 50, y: 10), tolerance: 3, constrain: false, clickCount: 1)
+        session.dragPen(to: CGPoint(x: 60, y: 10), constrain: false, breaksHandle: false, threshold: 1, spacing: 1)
+        session.repositionPenPoint(to: CGPoint(x: 60, y: 10))
+        session.repositionPenPoint(to: CGPoint(x: 65, y: 30))
+        let moved = try #require(session.penDraft?.knots.last)
+        #expect(moved.anchor == CGPoint(x: 55, y: 30) && moved.outgoing == CGPoint(x: 65, y: 30) && moved.incoming == CGPoint(x: 45, y: 30))
+        #expect(session.penDraft?.knots.first?.anchor == CGPoint(x: 10, y: 10), "the points already placed stay")
+        // Space let go: the drag shapes the handles again, about the point where it now is.
+        session.dragPen(to: CGPoint(x: 55, y: 45), constrain: false, breaksHandle: false, threshold: 1, spacing: 1)
+        session.endPen(tolerance: 1)
+        let placed = try #require(session.penDraft?.knots.last)
+        #expect(placed.anchor == CGPoint(x: 55, y: 30) && placed.outgoing == CGPoint(x: 55, y: 45))
+    }
+
+    @Test func commandReturnMakesThePathBeingDrawnTheSelection() throws {
+        let session = makeSession()
+        let layers = session.document?.layers.count
+        click(session, CGPoint(x: 10, y: 10))
+        click(session, CGPoint(x: 50, y: 10))
+        click(session, CGPoint(x: 30, y: 40))
+        session.makeSelectionFromPenPath()
+        #expect(session.penDraft == nil)
+        #expect(session.document?.layers.count == layers, "a selection, not a shape")
+        let selection = try #require(session.selection)
+        #expect(selection.path.contains(CGPoint(x: 30, y: 20)) && !selection.path.contains(CGPoint(x: 12, y: 35)))
+        // Between paths, the active shape's own.
+        session.deselect()
+        triangle(session)
+        session.makeSelectionFromPenPath()
+        #expect(session.selection?.path.contains(CGPoint(x: 30, y: 20)) == true)
+    }
+
     // MARK: Saving
 
     @Test func aPenShapeSurvivesSavingAndReopening() async throws {

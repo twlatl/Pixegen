@@ -220,6 +220,7 @@ extension CommandPaletteEntry {
             ("Curvature Pen", "P", .pen, { $0.penMode = .curvature }),
             ("Add Anchor Point", "P", .pen, { $0.penMode = .addAnchor }),
             ("Delete Anchor Point", "P", .pen, { $0.penMode = .deleteAnchor }),
+            ("Convert Point", "P", .pen, { $0.penMode = .convertPoint }),
             ("Path Selection", "A", .pathSelection, { $0.pathSelectionMode = .path }),
             ("Direct Selection", "A", .pathSelection, { $0.pathSelectionMode = .direct }),
             ("Type", "T", .type, nil),

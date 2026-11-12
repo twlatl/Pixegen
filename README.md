@@ -43,7 +43,7 @@ Download the latest release from [GitHub Releases](https://github.com/twlatl/Pix
 - Clone Stamp, aligned or not, sampling one layer or all of them
 - Blur tool, on pixels or masks
 - Gradient tool and Shape tool (rectangles, rounded rectangles, ellipses and lines), which stay editable rather than being rasterized
-- Pen tool (P, Shift-P for the next mode): Pen, Freeform Pen and Curvature Pen draw shape layers or a work path; Add and Delete Anchor Point edit any shape's path
+- Pen tool (P, Shift-P for the next mode): Pen, Freeform Pen and Curvature Pen draw shape layers or a work path; Add and Delete Anchor Point and Convert Point edit any shape's path. With the Pen, Command is Direct Selection and Option is Convert Point while held, Space moves the point being placed, and ⌘Return makes the path a selection
 - Combine, Subtract, Intersect and Exclude for two or more selected shapes, from the tool bar or Layer › Combine Shapes
 - Type tool (T): inline multiline editing in draggable, resizable paragraph boxes; font, size, color, alignment and spacing in the tool header; transform text and use it as a clipping mask
 - Eyedropper and a full color picker
