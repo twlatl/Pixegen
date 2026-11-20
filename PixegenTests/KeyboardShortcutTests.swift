@@ -89,3 +89,28 @@ extension KeyboardShortcutTests {
         #expect(settings.canvasEvent(v) === v, "other keys still reach the canvas")
     }
 }
+
+@MainActor
+struct FullscreenKeyTests {
+    private func key(_ characters: String, _ flags: NSEvent.ModifierFlags) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                                      context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                      isARepeat: false, keyCode: 3))
+    }
+
+    /// Globe-F is macOS full screen; a plain F is the menu's, and Globe with another modifier is something else's.
+    @Test func globeFAloneIsTheFullscreenKey() throws {
+        #expect(PixegenApplicationDelegate.isGlobeF(try key("f", .function)))
+        #expect(!PixegenApplicationDelegate.isGlobeF(try key("f", [])))
+        #expect(!PixegenApplicationDelegate.isGlobeF(try key("f", [.function, .command])))
+        #expect(!PixegenApplicationDelegate.isGlobeF(try key("g", .function)))
+    }
+
+    /// The flyouts' drawn icons render to template images for the menu to color.
+    @Test func toolMenuIconsRenderAsTemplates() throws {
+        for mode in PenMode.allCases {
+            let image = try #require(NSImage.toolMenuIcon(PenToolIcon(mode: mode)))
+            #expect(image.isTemplate && image.size == CGSize(width: 20, height: 16))
+        }
+    }
+}

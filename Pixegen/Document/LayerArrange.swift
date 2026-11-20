@@ -8,16 +8,6 @@ nonisolated enum LayerArrangement: String, CaseIterable, Sendable {
     case backward = "Send Backward"
     case forward = "Bring Forward"
 
-    /// The Arrange panel's label.
-    var shortName: String {
-        switch self {
-        case .back: "Back"
-        case .front: "Front"
-        case .backward: "Backward"
-        case .forward: "Forward"
-        }
-    }
-
     var systemImage: String {
         switch self {
         case .back: "square.3.layers.3d.bottom.filled"

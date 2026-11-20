@@ -84,8 +84,6 @@ extension PenMode {
         case .convertPoint: nil
         }
     }
-    /// The symbol in the flyout, which has no room to draw the pointer itself.
-    var menuSymbol: String { self == .convertPoint ? "angle" : badgeSymbol ?? "pencil.tip" }
 }
 
 /// The Pen tool's flyout: its six modes, the current one checked.
@@ -100,7 +98,7 @@ enum PenToolMenu {
                 session.penMode = mode
                 session.selectTool(.pen)
             }
-            item.image = NSImage(systemSymbolName: mode.menuSymbol, accessibilityDescription: nil)
+            item.setIcon(.toolMenuIcon(PenToolIcon(mode: mode)))
             item.state = session.tool == .pen && mode == session.penMode ? .on : .off
             // Shown, not bound: P picks the tool, Shift-P the next mode.
             item.keyEquivalent = "p"

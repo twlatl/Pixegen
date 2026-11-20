@@ -113,7 +113,9 @@ struct LayersHeader: View {
                 LayerSearchField(text: $session.layerSearchText) { searching = false }
                     .padding(.trailing, 6).disabled(hasNoLayers)
             } else {
+                // The title folds and opens the panel too.
                 Text("Layers").font(.system(size: 12, weight: .semibold))
+                    .contentShape(Rectangle()).onTapGesture { isCollapsed.toggle() }
                 Spacer()
             }
             Button {

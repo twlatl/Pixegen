@@ -84,7 +84,10 @@ struct ColorSwatchesPanel: View {
     }
 
     private func tabButton(_ title: String, _ value: Tab) -> some View {
-        Button { tab = value } label: {
+        // The tab showing folds and opens the panel, as the other panels' titles do; the other tab opens it at that tab.
+        Button {
+            if tab == value { isCollapsed.toggle() } else { tab = value; isCollapsed = false }
+        } label: {
             Text(title).font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(tab == value ? .primary : .tertiary)
         }

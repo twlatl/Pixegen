@@ -311,7 +311,7 @@ private struct KeyboardShortcutsSheet: View {
                     }
                     Divider().padding(.vertical, 8)
                     Text("Contextual keys & mouse gestures").font(.headline)
-                    Text("Text fields keep standard macOS editing keys. Dialogs share the Apply/Cancel assignments above. Numeric fields use Up/Down, with Shift for larger steps. Standard macOS commands include ⌘Q to quit and ⌃⌘F for full screen. The shortcut editor itself always uses Return to save and Esc to cancel when not recording.")
+                    Text("Text fields keep standard macOS editing keys. Dialogs share the Apply/Cancel assignments above. Numeric fields use Up/Down, with Shift for larger steps. Standard macOS commands include ⌘Q to quit and Globe-F (fn-F) for full screen, which keeps the bars and panels. The shortcut editor itself always uses Return to save and Esc to cancel when not recording.")
                     Text("Option temporarily selects the eyedropper in painting tools. Shift constrains shapes/movement or adds to a selection; Option subtracts from selections or draws from center. Command-drag moves selected pixels; Command-Option-drag copies them. Option-drag duplicates layers/folders/effects; Option-click at a layer boundary toggles clipping. Command-click a thumbnail loads its selection. Control bypasses snapping. Right-drag adjusts brush size. Modifier-and-mouse gestures are fixed.")
                 }.padding(.trailing, 8)
             }.frame(height: 465)

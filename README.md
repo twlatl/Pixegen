@@ -60,6 +60,7 @@ Download the latest release from [GitHub Releases](https://github.com/twlatl/Pix
 - Multiple projects in tabs
 - Search Commands (⌘F): find every menu command and tool by name, as in Raycast or Obsidian, and run it with Return
 - Toggle Fullscreen (F): the canvas alone on black over the whole screen, with every panel put away; F or Esc brings them back
+- macOS full screen (fn-F): the whole window, bars and panels included, in a space of its own
 - Rulers (⌘R), guides dragged from them, a layout grid with adjustable spacing and subdivisions, and Snap To for guides, grid, layers and document bounds
 - Crop with snapping, ratios including 3:4 and 9:16, and Option for symmetric cropping; with a selection, the crop starts at it
 - Canvas Size, Image Size and Trim
