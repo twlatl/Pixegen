@@ -44,7 +44,7 @@ final class PixegenApplicationDelegate: NSObject, NSApplicationDelegate {
         showEditor()
         // macOS adds Writing Tools, AutoFill, Start Dictation and Emoji & Symbols to the Edit menu; they're for typing
         // text, not editing images, and only got in the way. It adds Enter Full Screen (Globe-F) to the View menu,
-        // beside Canvas Only (F), which does the same job without the slow slide into a new space. Taken out once the menus exist, and again whenever the
+        // beside Canvas Only (F), which does the same job without the slow slide into a new space; Globe-F still works (see below). Taken out once the menus exist, and again whenever the
         // menu bar is opened, in case SwiftUI has rebuilt them since.
         DispatchQueue.main.async { Self.removeSystemExtras() }
         // View › Canvas Only's key is a plain F, and the menu takes a plain letter even while something is being
@@ -60,9 +60,17 @@ final class PixegenApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.charactersIgnoringModifiers?.lowercased() == "f",
-                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                  event.modifierFlags.intersection([.command, .control, .option, .function]).isEmpty,
                   let text = NSApp.keyWindow?.firstResponder as? NSText else { return event }
             text.keyDown(with: event)
+            return nil
+        }
+        // Globe-F (fn-F) is macOS's full screen, the window with its bars and panels in a space of its own: the View
+        // menu's item for it is taken out (see `removeSystemExtras`), so its key is caught here. In Canvas Only it
+        // brings the bars and panels back instead.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, Self.isGlobeF(event), let window = self.projects.window, NSApp.keyWindow === window else { return event }
+            if self.session.canvasOnly { self.toggleCanvasOnly() } else { window.toggleFullScreen(nil) }
             return nil
         }
         // Run as the menu opens (no queue), before it's drawn.
@@ -82,6 +90,13 @@ final class PixegenApplicationDelegate: NSObject, NSApplicationDelegate {
             if UserDefaults.standard.string(forKey: "UpdateFeedURL") != nil { self?.updater.checkForUpdates() }
             #endif
         }
+    }
+
+    /// Globe-F (fn-F) alone: macOS's key for full screen.
+    static func isGlobeF(_ event: NSEvent) -> Bool {
+        event.type == .keyDown && event.charactersIgnoringModifiers?.lowercased() == "f"
+            && event.modifierFlags.contains(.function)
+            && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
     }
 
     /// Black over everything but the window's inside in Canvas Only: the screen around it, its rounded corners and the

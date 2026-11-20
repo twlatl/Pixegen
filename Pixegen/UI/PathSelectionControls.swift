@@ -83,7 +83,7 @@ enum PathSelectionToolMenu {
                 if mode == .path { session.selectedPathKnots = [] }
                 session.selectTool(.pathSelection)
             }
-            item.image = NSImage(systemSymbolName: mode == .path ? "cursorarrow" : "cursorarrow.rays", accessibilityDescription: nil)
+            item.setIcon(.toolMenuIcon(PathSelectionToolIcon(direct: mode == .direct)))
             item.state = session.tool == .pathSelection && mode == session.pathSelectionMode ? .on : .off
             // Shown, not bound: A picks the tool, Shift-A the other mode.
             item.keyEquivalent = "a"
