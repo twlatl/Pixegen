@@ -105,6 +105,7 @@ final class ActionMenuItem: NSMenuItem {
     /// Gives the item an icon that shows: from macOS 27 a menu hides its items' images unless they ask to be seen.
     func setIcon(_ icon: NSImage?) {
         image = icon
-        if #available(macOS 27.0, *) { preferredImageVisibility = .visible }
+        // By name, as the macOS 26 SDK the app also builds with has no `preferredImageVisibility`; 1 is `.visible`.
+        if responds(to: NSSelectorFromString("setPreferredImageVisibility:")) { setValue(1, forKey: "preferredImageVisibility") }
     }
 }

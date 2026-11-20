@@ -106,6 +106,16 @@ struct FullscreenKeyTests {
         #expect(!PixegenApplicationDelegate.isGlobeF(try key("g", .function)))
     }
 
+    /// A flyout item's icon is set to show, where macOS has the setting (27 on; it hides menu images otherwise).
+    @Test func flyoutIconsAskToBeVisible() {
+        let item = ActionMenuItem(title: "Pen Tool") {}
+        item.setIcon(NSImage(systemSymbolName: "star", accessibilityDescription: nil))
+        #expect(item.image != nil)
+        if item.responds(to: NSSelectorFromString("preferredImageVisibility")) {
+            #expect(item.value(forKey: "preferredImageVisibility") as? Int == 1)
+        }
+    }
+
     /// The flyouts' drawn icons render to template images for the menu to color.
     @Test func toolMenuIconsRenderAsTemplates() throws {
         for mode in PenMode.allCases {
