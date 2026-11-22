@@ -156,6 +156,88 @@ struct TextOnPathTests {
         #expect(session.activeLayer?.liveText?.style.path?.start == before)
     }
 
+    @Test func anOffsetStandsTheLettersFartherFromTheCircle() throws {
+        let session = makeSession()
+        draw(session, .ellipse, CGRect(x: 100, y: 100, width: 200, height: 200))
+        let layer = try type(session, "Around", near: CGPoint(x: 200, y: 100))
+        let middle = CGPoint(x: 200, y: 200)
+        func radii(_ layer: ImageLayer) throws -> [CGFloat] { try centers(layer).map { hypot($0.x - middle.x, $0.y - middle.y) } }
+        func turn(_ layer: ImageLayer) throws -> CGFloat {
+            let points = try centers(layer)
+            return abs(atan2(points.last!.y - middle.y, points.last!.x - middle.x) - atan2(points.first!.y - middle.y, points.first!.x - middle.x))
+        }
+        session.editActiveText()
+        session.changeTextStyle { $0.path?.offset = 40 }
+        #expect(session.finishText())
+        let out = try #require(session.activeLayer)
+        #expect(zip(try radii(out), try radii(layer)).allSatisfy { abs($0 - $1 - 40) < 1.5 }, "each letter 40 pixels farther out")
+        #expect(try turn(out) < turn(layer), "spaced as before round a bigger circle, so the word wraps less of it")
+        #expect(session.isOnTextPath(out, at: CGPoint(x: 200, y: 100), tolerance: 1), "the circle stays where it was")
+        session.editActiveText()
+        session.changeTextStyle { $0.path?.offset = -30 }
+        #expect(session.finishText())
+        let inside = try #require(session.activeLayer)
+        #expect(zip(try radii(inside), try radii(layer)).allSatisfy { abs($1 - $0 - 30) < 1.5 }, "each letter 30 pixels farther in")
+    }
+
+    @Test func controlArrowsSpaceTheTextFromItsPath() throws {
+        let session = makeSession()
+        draw(session, .line, CGRect(x: 50, y: 200, width: 500, height: 0))
+        let layer = try type(session, "Space", near: CGPoint(x: 100, y: 200))
+        let start = try #require(layer.liveText?.style.path?.start)
+        let first = try #require(try centers(layer).first)
+        session.selectTool(.pathSelection)
+        #expect(session.canSpaceTextPath)
+        let count = session.history.undoCount
+        for _ in 0..<3 { session.spaceTextPath(by: 10) }
+        var path = try #require(session.activeLayer?.liveText?.style.path)
+        #expect(path.offset == 30)
+        #expect(path.start == start, "it doesn't slide along the path")
+        #expect(abs(try #require(try centers(session.activeLayer!).first).y - (first.y - 30)) < 1, "30 pixels farther up")
+        #expect(session.history.undoCount == count + 1, "presses in quick succession are one step")
+        // Down past the line: in toward it and through it, without flipping; back to it is no offset at all.
+        for _ in 0..<5 { session.spaceTextPath(by: -10) }
+        path = try #require(session.activeLayer?.liveText?.style.path)
+        #expect(path.offset == -20)
+        #expect(!path.isFlipped)
+        session.spaceTextPath(by: 20)
+        #expect(session.activeLayer?.liveText?.style.path?.offset == nil)
+        session.undo()
+        #expect(session.activeLayer?.liveText?.style.path?.offset == nil)
+        #expect(session.activeLayer?.liveText?.style.path?.start == start)
+    }
+
+    @Test func controlArrowsSpaceTheTextBeingEdited() throws {
+        let session = makeSession()
+        draw(session, .ellipse, CGRect(x: 100, y: 100, width: 200, height: 200))
+        _ = try type(session, "Edit", near: CGPoint(x: 200, y: 100))
+        session.editActiveText()
+        #expect(session.canSpaceTextPath)
+        session.spaceTextPath(by: 1)
+        session.spaceTextPath(by: 10)
+        #expect(session.textDraft?.style.path?.offset == 11)
+        #expect(session.finishText())
+        #expect(session.activeLayer?.liveText?.style.path?.offset == 11)
+    }
+
+    @Test func spacedTextIsPickedUpByItsLetters() throws {
+        let session = makeSession()
+        draw(session, .line, CGRect(x: 50, y: 200, width: 500, height: 0))
+        let layer = try type(session, "Far", near: CGPoint(x: 100, y: 200))
+        session.selectTool(.pathSelection)
+        session.spaceTextPath(by: 100)
+        let spaced = try #require(session.activeLayer)
+        let letter = try #require(try centers(spaced).first)
+        #expect(letter.y < 110)
+        // A drag on the letters, far off the path, still slides them along it.
+        session.beginPathDrag(at: letter, tolerance: 5, extend: false)
+        session.dragPath(to: CGPoint(x: letter.x + 40, y: letter.y), breaksHandle: false)
+        session.endPathDrag()
+        let slid = try #require(session.activeLayer?.liveText?.style.path)
+        #expect(abs(slid.start - (try #require(layer.liveText?.style.path?.start)) - 40) < 1)
+        #expect(slid.offset == 100)
+    }
+
     @Test func draggingAcrossThePathFlipsTheText() throws {
         let session = makeSession()
         draw(session, .line, CGRect(x: 50, y: 200, width: 500, height: 0))
@@ -251,6 +333,28 @@ struct TextOnPathTests {
 
         var older = loaded.manifest
         older.version = 20
+        try JSONEncoder().encode(older).write(to: url.appendingPathComponent("manifest.json"))
+        await #expect(throws: (any Error).self) { _ = try await ProjectStore.shared.load(from: url) }
+    }
+
+    @Test func anOffsetSavesAsVersion25AndReopens() async throws {
+        let session = makeSession()
+        draw(session, .ellipse, CGRect(x: 100, y: 100, width: 200, height: 200))
+        let layer = try type(session, "Spaced", near: CGPoint(x: 200, y: 100))
+        session.editActiveText()
+        session.changeTextStyle { $0.path?.offset = 24 }
+        #expect(session.finishText())
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("TextOnPathTests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("Offset.pbox")
+        try await ProjectStore.shared.save(try #require(session.projectSnapshot()), to: url)
+        let loaded = try await ProjectStore.shared.load(from: url)
+        #expect(loaded.manifest.version == 25)
+        #expect(loaded.manifest.layers.first { $0.id == layer.id }?.text?.path?.offset == 24)
+
+        var older = loaded.manifest
+        older.version = 24
         try JSONEncoder().encode(older).write(to: url.appendingPathComponent("manifest.json"))
         await #expect(throws: (any Error).self) { _ = try await ProjectStore.shared.load(from: url) }
     }

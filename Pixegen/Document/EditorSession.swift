@@ -259,6 +259,8 @@ final class EditorSession {
     @ObservationIgnored var toolBeforeExport: NavigationTool?
     /// The last slice change that may be folded into its undo step.
     @ObservationIgnored var lastSliceEdit: (id: UUID, name: String, time: Date)?
+    /// The last Control-Option-arrow step of text on a path off its path, which the next may be folded into.
+    @ObservationIgnored var lastTextPathSpacing: (id: UUID, time: Date)?
     var adjustmentOriginal: LayerAdjustment?
     var adjustmentEditingID: UUID? { didSet { resumeFileRequests() } }
     /// The layer whose effects panel is open.

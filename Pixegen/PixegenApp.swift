@@ -241,9 +241,11 @@ struct PixegenApp: App {
                     }
                         .configuredKeyboardShortcut("v")
                 }
+                CommandGroup(after: .help) {
+                    Button("Keyboard Shortcuts…") { ShortcutSettings.shared.show() }
+                }
                 CommandGroup(after: .pasteboard) {
                     Divider()
-                    Button("Keyboard Shortcuts…") { ShortcutSettings.shared.show() }
                     // Photoshop's fill shortcuts; in a text field they keep their text meaning.
                     Button("Fill with Foreground Color") {
                         if NSApp.keyWindow?.firstResponder is NSTextView {

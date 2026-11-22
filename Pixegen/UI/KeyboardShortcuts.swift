@@ -139,6 +139,8 @@ struct ShortcutDefinition: Identifiable {
             result += [entry("Nudge \(direction) 1 px", key), entry("Nudge \(direction) 10 px", key, 8),
                        entry("Move selected pixels \(direction) 1 px", key, 1), entry("Move selected pixels \(direction) 10 px", key, 9)]
         }
+        result += [entry("Move type on a path out from it 1 px", "\u{f700}", 6), entry("Move type on a path out from it 10 px", "\u{f700}", 14),
+                   entry("Move type on a path in toward it 1 px", "\u{f701}", 6), entry("Move type on a path in toward it 10 px", "\u{f701}", 14)]
         result.append(.init(title: "Finish editing text", group: "Text Editing", original: ShortcutChord("\r", 1)))
         for (title, key) in [("Decrease tracking", "\u{f702}"), ("Increase tracking", "\u{f703}"),
                              ("Decrease leading", "\u{f700}"), ("Increase leading", "\u{f701}")] {

@@ -117,7 +117,7 @@ struct GIFLayerTests {
         let project = FileManager.default.temporaryDirectory.appendingPathComponent("GIF-\(UUID()).pbox")
         defer { try? FileManager.default.removeItem(at: project) }
         let snapshot = try #require(session.projectSnapshot())
-        #expect(snapshot.manifest.version == 24)
+        #expect(snapshot.manifest.version == ProjectManifest.current)
         try await ProjectStore.shared.save(snapshot, to: project)
         let loaded = try await ProjectStore.shared.load(from: project)
         let reopened = EditorSession()

@@ -72,7 +72,7 @@ Download the latest release from [GitHub Releases](https://github.com/twlatl/Pix
 - Export PNG (⇧⌘E), Export JPEG (⇧⌥⌘S), and Export As (⇧⌥⌘W) for PNG, JPEG, a one-page PDF at the print size or, with a GIF layer, an animated GIF, scaled if you like, with a live preview, JPEG quality and file size; Copy Merged
 - Export for Web (⌘E): slice the canvas with the Slice tool (K) and export each slice in several formats at once — JPEG, PNG (including 256-color), WebP, SVG, GIF or MP4, at any scale with a suffix — with live file sizes and presets
 - Keep working while a project saves
-- Photoshop-style keyboard shortcuts throughout, remappable in Edit > Keyboard Shortcuts
+- Photoshop-style keyboard shortcuts throughout, remappable in Help > Keyboard Shortcuts
 - Drag a number's label to scrub its value, as in Photoshop
 - Automatic updates, signed and notarized
 
