@@ -84,6 +84,8 @@ final class CanvasView: NSView {
         didSet { if transformDrag == nil { releaseDragCursor() } }
     }
     private var dragCursor: NSCursor?
+    /// An up or down arrow while Control-Option-Up or Control-Option-Down moves text on a path out from it or in.
+    private var spacingCursor: NSCursor?
     private weak var cursorLockWindow: NSWindow?
     private var cropDrag: CropDrag? {
         didSet { if cropDrag == nil { releaseDragCursor() } }
@@ -388,6 +390,31 @@ final class CanvasView: NSView {
         }
         return NSCursor(image: image, hotSpot: NSPoint(x: 10, y: 18))
     }()
+    /// Control-Option-Up over text on a path, moving its letters out from it, and Control-Option-Down, moving them
+    /// in: a plain arrow pointing the way they go. The hot spot is its middle.
+    static let textPathOutCursor = verticalArrowCursor(up: true)
+    static let textPathInCursor = verticalArrowCursor(up: false)
+    private static func verticalArrowCursor(up: Bool) -> NSCursor {
+        let image = NSImage(size: NSSize(width: 24, height: 24), flipped: true) { _ in
+            let tip: CGFloat = up ? 3 : 21, barb: CGFloat = up ? 10 : 14
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: 12, y: 24 - tip)); arrow.line(to: NSPoint(x: 12, y: tip))
+            arrow.move(to: NSPoint(x: 6, y: barb)); arrow.line(to: NSPoint(x: 12, y: tip)); arrow.line(to: NSPoint(x: 18, y: barb))
+            arrow.lineCapStyle = .round
+            arrow.lineJoinStyle = .round
+            NSColor.white.setStroke(); arrow.lineWidth = 4; arrow.stroke()
+            NSColor.black.setStroke(); arrow.lineWidth = 2; arrow.stroke()
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 12, y: 12))
+    }
+    /// Shows `cursor` for as long as Control, Option and the arrow are held, or puts the tool's own back when nil.
+    func showSpacingCursor(_ cursor: NSCursor?) {
+        cursor?.set()
+        guard spacingCursor !== cursor else { return }
+        spacingCursor = cursor
+        window?.invalidateCursorRects(for: self)
+    }
     /// The Type tool inside a closed shape: an I-beam in a dotted circle, as Photoshop's area type pointer. The hot
     /// spot is the I-beam's middle.
     static let typeInShapeCursor: NSCursor = {
@@ -927,6 +954,7 @@ final class CanvasView: NSView {
         modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self else { return event }
             self.optionHeld = event.modifierFlags.contains(.option)
+            if !event.modifierFlags.isSuperset(of: [.control, .option]) { self.showSpacingCursor(nil) }
             // Color Range: Shift adds and Option takes away, shown on the eyedropper and in its panel as they're held.
             if let edit = self.session.colorRange {
                 let flags = event.modifierFlags
@@ -1720,6 +1748,7 @@ final class CanvasView: NSView {
 
     override func resetCursorRects() {
         guard session.document != nil else { return }
+        if let spacingCursor { addCursorRect(bounds, cursor: spacingCursor); return }
         if let dragCursor { addCursorRect(bounds, cursor: dragCursor); return }
         if picking {
             addCursorRect(bounds, cursor: pickCursor)
@@ -1907,7 +1936,8 @@ final class CanvasView: NSView {
     }
     override func cursorUpdate(with event: NSEvent) {
         guard session.document != nil else { return }
-        if picking { pickCursor.set() }
+        if let spacingCursor { spacingCursor.set() }
+        else if picking { pickCursor.set() }
         else if session.tool.isSelectionTool, !spaceHeld { lassoCursor.set() }
         // Cursor-update events carry no modifier flags (AppKit sends one after every key change), so read
         // the keys as they are now; the event's flags would undo Option's duplicate cursor straight away.
@@ -2605,6 +2635,16 @@ final class CanvasView: NSView {
         // A drag session swallows the flagsChanged that says Option was let go, which left the canvas thinking it
         // was still held — and with it the Eyedropper standing in for the Brush. Every key press re-reads it.
         optionHeld = event.modifierFlags.contains(.option)
+        if [125, 126].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option]) == [.control, .option],
+           session.canSpaceTextPath {
+            // Control-Option-Up moves text on a path out from it, Control-Option-Down in toward it and past it; Shift
+            // makes each step ten. (Control alone with Up and Down is Mission Control's.)
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            session.spaceTextPath(by: event.keyCode == 126 ? step : -step)
+            showSpacingCursor(event.keyCode == 126 ? Self.textPathOutCursor : Self.textPathInCursor)
+            synchronizeDisplay()
+            return
+        }
         if [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option, .shift]) == .shift {
             if session.canContentAwareFill { session.beginFilter(.contentAwareFill) }
             return
@@ -2765,7 +2805,9 @@ final class CanvasView: NSView {
         } else { super.keyDown(with: event) }
     }
     override func keyUp(with event: NSEvent) {
-        if event.keyCode == panPhysicalKey || (panPhysicalKey == nil && event.keyCode == 49) {
+        if [125, 126].contains(event.keyCode), spacingCursor != nil {
+            showSpacingCursor(nil)
+        } else if event.keyCode == panPhysicalKey || (panPhysicalKey == nil && event.keyCode == 49) {
             panPhysicalKey = nil
             spaceHeld = false
             updateBrushCursor()

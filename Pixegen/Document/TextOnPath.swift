@@ -10,11 +10,18 @@ nonisolated struct TextPath: Codable, Equatable, Sendable {
     var start: CGFloat
     /// The letters on the path's other side, running the other way. Nil is not flipped.
     var flipped: Bool? = nil
+    /// How far the letters stand off the path, in layer pixels: positive out on the side they stand on, negative in
+    /// toward it and past it. Nil is on the path. Version 25.
+    var offset: CGFloat? = nil
 
     var isFlipped: Bool { flipped == true }
+    var baselineOffset: CGFloat { offset ?? 0 }
+    /// The farthest the letters stand off the path either way.
+    static let maxOffset: CGFloat = 10_000
     var isValid: Bool {
         let points = subpath.knots.flatMap { [$0.anchor, $0.incoming, $0.outgoing] }
         return (2...ShapeOutline.maxKnots).contains(subpath.knots.count) && start.isFinite && abs(start) <= 10_000_000
+            && (offset.map { $0.isFinite && abs($0) <= Self.maxOffset } ?? true)
             && points.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1_000_000 && abs($0.y) <= 1_000_000 }
     }
     var cgPath: CGPath { ShapeOutline.path(of: [subpath]) }
@@ -69,19 +76,49 @@ nonisolated struct PathRuler {
             }
         }
         if closed, let first = points.first, let last = points.last, first != last { points.append(first) }
+        self.init(points: points, closed: closed)
+    }
+
+    private init(points: [CGPoint], closed: Bool) {
         var distances: [CGFloat] = []
         var total: CGFloat = 0
         for (index, point) in points.enumerated() {
             if index > 0 { total += hypot(point.x - points[index - 1].x, point.y - points[index - 1].y) }
             distances.append(total)
         }
-        self.points = points
-        self.distances = distances
-        self.closed = closed
+        self.init(points: points, distances: distances, closed: closed)
     }
 
     private init(points: [CGPoint], distances: [CGFloat], closed: Bool) {
         self.points = points; self.distances = distances; self.closed = closed
+    }
+
+    /// The line `distance` off the path, on its left as it runs (where letters stand), or its right when negative.
+    /// Corners are mitered, up to twice the distance.
+    func offset(by distance: CGFloat) -> PathRuler {
+        guard distance != 0, points.count >= 2 else { return self }
+        // Each piece's unit normal, to the left of the way it runs; a piece of no length borrows its neighbor's.
+        var normals: [CGPoint?] = (1..<points.count).map { index in
+            let dx = points[index].x - points[index - 1].x, dy = points[index].y - points[index - 1].y
+            let length = hypot(dx, dy)
+            return length > 0 ? CGPoint(x: dy / length, y: -dx / length) : nil
+        }
+        for index in normals.indices.dropFirst() where normals[index] == nil { normals[index] = normals[index - 1] }
+        for index in normals.indices.reversed().dropFirst() where normals[index] == nil { normals[index] = normals[index + 1] }
+        guard normals.first! != nil else { return self }
+        let last = points.count - 1
+        let moved = points.indices.map { index -> CGPoint in
+            let before = index > 0 ? normals[index - 1] : closed ? normals.last! : nil
+            let after = index < last ? normals[index] : closed ? normals.first! : nil
+            guard let a = before ?? after, let b = after ?? before else { return points[index] }
+            var mean = CGPoint(x: a.x + b.x, y: a.y + b.y)
+            let length = hypot(mean.x, mean.y)
+            // Turning right back on itself, the piece before decides.
+            mean = length > 0.0001 ? CGPoint(x: mean.x / length, y: mean.y / length) : a
+            let reach = distance / max(0.5, mean.x * a.x + mean.y * a.y)
+            return CGPoint(x: points[index].x + mean.x * reach, y: points[index].y + mean.y * reach)
+        }
+        return PathRuler(points: moved, closed: closed)
     }
 
     /// The same path walked the other way.
@@ -166,13 +203,13 @@ nonisolated struct TextPathSlide {
         self.ruler = ruler
         along = near.distance
         flipped = path.isFlipped
-        let offset = Self.offset(of: point, at: near.distance, on: ruler)
+        let gap = Self.gap(of: point, at: near.distance, on: ruler)
         // Right on the path, it's the side the letters are on.
-        side = abs(offset) < Self.crossing ? (flipped ? -1 : 1) : (offset < 0 ? -1 : 1)
+        side = abs(gap) < Self.crossing ? (flipped ? -1 : 1) : (gap < 0 ? -1 : 1)
     }
 
     /// How far `point` is from the path at `distance` along it: positive on the side unflipped letters stand on.
-    private static func offset(of point: CGPoint, at distance: CGFloat, on ruler: PathRuler) -> CGFloat {
+    private static func gap(of point: CGPoint, at distance: CGFloat, on ruler: PathRuler) -> CGFloat {
         guard let placed = ruler.place(at: distance) else { return 0 }
         return (point.x - placed.point.x) * sin(placed.angle) - (point.y - placed.point.y) * cos(placed.angle)
     }
@@ -185,9 +222,9 @@ nonisolated struct TextPathSlide {
             if ruler.closed { step = remainder(step, ruler.length) }
             along = near.distance
             travelled += step
-            let offset = Self.offset(of: point, at: near.distance, on: ruler)
-            if offset > Self.crossing, side < 0 { side = 1; flipped.toggle() }
-            if offset < -Self.crossing, side > 0 { side = -1; flipped.toggle() }
+            let gap = Self.gap(of: point, at: near.distance, on: ruler)
+            if gap > Self.crossing, side < 0 { side = 1; flipped.toggle() }
+            if gap < -Self.crossing, side > 0 { side = -1; flipped.toggle() }
         }
         var result = path
         var start = path.start + travelled
@@ -232,13 +269,16 @@ nonisolated struct PathTextLayout {
     var caretDistances: [Int: CGFloat] = [:]
     /// Some letters didn't fit on the path and aren't shown.
     var overflows = false
-    /// The path as the letters walk it: reversed when flipped.
+    /// The line the letters walk: the path, reversed when flipped, and moved off it by the path's offset.
     var ruler: PathRuler?
+    /// The path itself, walked the way the letters go.
+    var path: PathRuler?
 }
 
 extension LayerTextStyle {
-    /// Room around the path for letters standing on either side of it.
-    var pathMargin: CGFloat { Self.padding + (fontSize * 1.6).rounded(.up) }
+    /// Room around the path for letters standing on either side of it, and twice as far again as they stand off it,
+    /// for the line they walk reaching further out at a corner.
+    var pathMargin: CGFloat { Self.padding + (fontSize * 1.6).rounded(.up) + (abs(path?.baselineOffset ?? 0) * 2).rounded(.up) }
 
     /// The point of the text's own pixels that stays where it is on the document as the text changes size: the top
     /// left corner for ordinary text, and for text on a path, the corner of the path's box.
@@ -265,9 +305,13 @@ extension EditorSession {
         var shift = CGAffineTransform(translationX: anchor.x, y: anchor.y)
         guard let placed = path.cgPath.copy(using: &shift) else { return layout }
         let forward = PathRuler(placed, closed: path.subpath.closed)
-        let ruler = path.isFlipped ? forward.reversed : forward
+        let walked = path.isFlipped ? forward.reversed : forward
+        let ruler = walked.offset(by: path.baselineOffset)
+        layout.path = walked
         layout.ruler = ruler
-        guard ruler.length > 0 else { return layout }
+        guard walked.length > 0, ruler.length > 0 else { return layout }
+        // Where the text is anchored on the line the letters walk: as far round it as `start` is round the path.
+        let start = path.start * ruler.length / walked.length
         let string = attributedText(style)
         // One line: breaks become spaces, keeping every offset where it was.
         let content = string.string as NSString
@@ -280,12 +324,12 @@ extension EditorSession {
         // Flipped, the text covers the same stretch of the path as it did, from the other side: walked the other
         // way, its start is where its end was.
         let origin: CGFloat = switch (style.alignment, path.isFlipped) {
-        case (.left, false): path.start
-        case (.center, false): path.start - width / 2
-        case (.right, false): path.start - width
-        case (.left, true): ruler.length - path.start - width
-        case (.center, true): ruler.length - path.start - width / 2
-        case (.right, true): ruler.length - path.start
+        case (.left, false): start
+        case (.center, false): start - width / 2
+        case (.right, false): start - width
+        case (.left, true): ruler.length - start - width
+        case (.center, true): ruler.length - start - width / 2
+        case (.right, true): ruler.length - start
         }
         /// Where a letter `offset` along the text lands on the path, or nil when it falls off it.
         func along(_ offset: CGFloat, _ advance: CGFloat) -> CGFloat? {
@@ -429,12 +473,48 @@ extension EditorSession {
             .concatenating(layer.transform.unitToDocument)
     }
 
-    /// Whether `point` (document pixels) is on a text-on-path layer's own path, so a click there edits it.
+    /// Whether `point` (document pixels) is on a text-on-path layer's own path, or as far off it as its letters
+    /// stand, so a click there edits it.
     func isOnTextPath(_ layer: ImageLayer, at point: CGPoint, tolerance: CGFloat) -> Bool {
         guard let path = layer.liveText?.style.path, var map = Self.textPathToDocument(layer),
               let placed = path.cgPath.copy(using: &map),
               let near = PathRuler(placed, closed: path.subpath.closed).nearest(to: point) else { return false }
-        return near.gap <= tolerance
+        let scale = abs(map.a * map.d - map.b * map.c).squareRoot()
+        return near.gap <= tolerance + abs(path.baselineOffset) * scale
+    }
+
+    /// Whether Control-Option-Up and Control-Option-Down would move text on a path out from it or in: the text being
+    /// edited, or the active layer's.
+    var canSpaceTextPath: Bool {
+        if let draft = textDraft { return draft.style.path != nil }
+        return canEditLayers && pathTextLayer != nil
+    }
+
+    /// Control-Option-Up and Control-Option-Down: the letters of text on a path moved `step` layer pixels out from it,
+    /// or in when negative, and past it. The text being edited changes with the rest of the edit; the active layer's changes as
+    /// an undo step that presses in quick succession share.
+    func spaceTextPath(by step: CGFloat) {
+        func spaced(_ path: TextPath) -> TextPath {
+            var path = path
+            let offset = min(max((path.baselineOffset + step).rounded(), -TextPath.maxOffset), TextPath.maxOffset)
+            path.offset = offset == 0 ? nil : offset
+            return path
+        }
+        if textDraft != nil {
+            changeTextStyle { style in style.path = style.path.map(spaced) }
+            return
+        }
+        guard canEditLayers, let layer = pathTextLayer, var style = layer.liveText?.style, let path = style.path,
+              let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { return }
+        style.path = spaced(path)
+        guard style.isValid, style != layer.liveText?.style, let placed = try? Self.placedText(style, on: layer) else { return }
+        let name = "Move Type Off Path"
+        let continuing = lastTextPathSpacing.map { $0.id == layer.id && Date().timeIntervalSince($0.time) < 1.5 } == true
+            && history.canAmendLast(name)
+        if !continuing { beginEdit(name) }
+        setText(placed, at: index)
+        if continuing { history.amendLast(document: document, selection: activeLayerID) } else { endEdit() }
+        lastTextPathSpacing = (layer.id, Date())
     }
 
     /// Text on a path flipped to its other side, or back.

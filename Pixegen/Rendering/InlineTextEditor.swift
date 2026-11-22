@@ -41,6 +41,15 @@ final class CanvasTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         guard let event = ShortcutSettings.shared.textEvent(event) else { return }
         if event.keyCode == 53 { editor?.canvas?.session.cancelText(); return }
+        // Control-Option-Up moves text on a path out from it, Control-Option-Down in toward it; Shift makes each step
+        // ten. Before Option alone, which sets the leading.
+        if [125, 126].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option]) == [.control, .option],
+           let editor, let session = editor.canvas?.session, session.textDraft?.style.path != nil {
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            session.spaceTextPath(by: event.keyCode == 126 ? step : -step)
+            editor.showSpacingCursor(event.keyCode == 126 ? CanvasView.textPathOutCursor : CanvasView.textPathInCursor)
+            return
+        }
         // Option with the arrows sets spacing, as in Photoshop: left and right the tracking, up and down the
         // leading. Shift makes each step ten.
         if event.modifierFlags.contains(.option), [123, 124, 125, 126].contains(event.keyCode),
@@ -63,6 +72,14 @@ final class CanvasTextView: NSTextView {
         super.keyDown(with: event)
         // Text views hide the pointer while typing; on the canvas it stays, so you can see where you'll click next.
         NSCursor.setHiddenUntilMouseMoves(false)
+    }
+    override func keyUp(with event: NSEvent) {
+        if [125, 126].contains(event.keyCode) { editor?.showSpacingCursor(nil) }
+        super.keyUp(with: event)
+    }
+    override func flagsChanged(with event: NSEvent) {
+        if !event.modifierFlags.isSuperset(of: [.control, .option]) { editor?.showSpacingCursor(nil) }
+        super.flagsChanged(with: event)
     }
     override func mouseExited(with event: NSEvent) { NSCursor.setHiddenUntilMouseMoves(false) }
     override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
@@ -93,6 +110,8 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
     private var resize: (handle: Int, draft: TextDraft, transform: LayerTransform, start: CGPoint)?
     /// Command-drag on text on a path: the text sliding along it.
     private var slide: TextPathSlide?
+    /// An up or down arrow while Control-Option-Up or Control-Option-Down moves text on a path out from it or in.
+    private var spacingCursor: NSCursor?
     /// The transform the editor is actually showing. Point text grows as it is typed, so this is not always the
     /// draft's own transform, and a resize has to start from what is on screen or the text jumps.
     override var isFlipped: Bool { true }
@@ -352,6 +371,7 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
             return
         }
         guard resize == nil, canvas?.session.colorPicker == nil else { return }
+        if let spacingCursor { spacingCursor.set(); return }
         // Command over text on a path: the Path Selection arrow, which slides it.
         if pathStyle != nil, NSEvent.modifierFlags.contains(.command) { CanvasView.pathSelectionCursor.set(); return }
         guard let index = handle(at: point) else { NSCursor.iBeam.set(); return }
@@ -440,6 +460,19 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
         return super.hitTest(point)
     }
 
+    /// Shows `cursor` for as long as Control, Option and the arrow are held, with the text redrawn as it moves; nil puts the
+    /// usual cursor back.
+    func showSpacingCursor(_ cursor: NSCursor?) {
+        if let cursor {
+            canvas?.synchronizeDisplay()
+            needsDisplay = true
+            cursor.set()
+        }
+        guard spacingCursor !== cursor else { return }
+        spacingCursor = cursor
+        if cursor == nil, let window { showCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil)) }
+    }
+
     /// The draft's style when it's text on a path.
     private var pathStyle: LayerTextStyle? {
         guard let style = canvas?.session.textDraft?.style, style.path != nil else { return nil }
@@ -456,13 +489,13 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
     /// The path, the selection along it, the caret, and a plus at the path's end when letters run off it.
     private func drawPathText(_ style: LayerTextStyle) {
         let layout = pathLayout(style)
-        guard let ruler = layout.ruler, let context = NSGraphicsContext.current?.cgContext else { return }
+        guard let ruler = layout.ruler, let path = layout.path, let context = NSGraphicsContext.current?.cgContext else { return }
         let line = handleSize / 6
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.addPath(ruler.stretch(from: 0, to: ruler.length))
+        context.addPath(path.stretch(from: 0, to: path.length))
         context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.6).cgColor)
         context.setLineWidth(line)
         context.strokePath()
